@@ -187,13 +187,16 @@ class SnowflakeManager:
         try:
             cursor = self.connection.cursor()
 
-            # Build query with safe casting
+            # Build query with safe casting for all problematic column types
             schema = self.table_schemas.get(table_name, [])
             select_clauses = []
             for col in schema:
                 col_name = col['name']
                 col_type = col['type'].upper()
-                if col_type in ['NUMBER', 'BIGINT', 'DECIMAL', 'INT', 'INTEGER']:
+                # Convert all numeric and timestamp types to string to avoid overflow
+                if col_type in ['NUMBER', 'BIGINT', 'DECIMAL', 'INT', 'INTEGER', 'FLOAT', 'DOUBLE']:
+                    select_clauses.append(f"TO_VARCHAR({col_name}) AS {col_name}")
+                elif 'TIMESTAMP' in col_type or col_type in ['TIMESTAMP_NTZ', 'TIMESTAMP_LTZ', 'TIMESTAMP_TZ']:
                     select_clauses.append(f"TO_VARCHAR({col_name}) AS {col_name}")
                 else:
                     select_clauses.append(f"{col_name}")
@@ -213,8 +216,7 @@ class SnowflakeManager:
         except Exception as e:
             st.error(f"❌ Failed to preview table {table_name}: {str(e)}")
             return pd.DataFrame()
-
-    
+        
     def get_companies_for_scoring(self, table_name: str, limit: int = 100, filters: Dict = None) -> pd.DataFrame:
         """Get companies from any selected table for scoring"""
         if not self.is_connected():
@@ -226,11 +228,19 @@ class SnowflakeManager:
             
             # Build SELECT clause using available columns with safer data handling
             select_columns = []
+            schema = self.table_schemas.get(table_name, [])
             for standard_field, actual_column in mapping.items():
                 if actual_column:
-                    # Cast large numbers to string to avoid overflow
-                    if 'employee' in standard_field.lower() or 'count' in standard_field.lower():
-                        select_columns.append(f"CAST({actual_column} AS VARCHAR) as {standard_field}")
+                    # Cast ALL numeric and timestamp columns to string to avoid overflow
+                    col_info = next((col for col in schema if col['name'] == actual_column), None)
+                    if col_info:
+                        col_type = col_info['type'].upper()
+                        if col_type in ['NUMBER', 'BIGINT', 'DECIMAL', 'INT', 'INTEGER', 'FLOAT', 'DOUBLE']:
+                            select_columns.append(f"TO_VARCHAR({actual_column}) as {standard_field}")
+                        elif 'TIMESTAMP' in col_type or col_type in ['TIMESTAMP_NTZ', 'TIMESTAMP_LTZ', 'TIMESTAMP_TZ']:
+                            select_columns.append(f"TO_VARCHAR({actual_column}) as {standard_field}")
+                        else:
+                            select_columns.append(f"{actual_column} as {standard_field}")
                     else:
                         select_columns.append(f"{actual_column} as {standard_field}")
             
@@ -283,9 +293,11 @@ class SnowflakeManager:
                 ORDER BY RANDOM()
                 LIMIT {limit}
             """
-            
+
+            # Set session to handle large numbers safely
+            cursor.execute("ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'json'")
             cursor.execute(query, params)
-            
+
             # Fetch data and column names
             columns = [desc[0].lower() for desc in cursor.description]
             data = cursor.fetchall()
@@ -572,13 +584,13 @@ class SnowflakeManager:
                 if not schema_entry:
                     continue
                 col_type = schema_entry['type'].upper()
-                if col_type in ['NUMBER', 'BIGINT', 'DECIMAL', 'INT', 'INTEGER']:
+                # Convert ALL numeric and timestamp types to string
+                if col_type in ['NUMBER', 'BIGINT', 'DECIMAL', 'INT', 'INTEGER', 'FLOAT', 'DOUBLE']:
+                    select_columns.append(f"TO_VARCHAR({actual_column}) AS {field}")
+                elif 'TIMESTAMP' in col_type or col_type in ['TIMESTAMP_NTZ', 'TIMESTAMP_LTZ', 'TIMESTAMP_TZ']:
                     select_columns.append(f"TO_VARCHAR({actual_column}) AS {field}")
                 else:
                     select_columns.append(f"{actual_column} AS {field}")
-            if not select_columns:
-                st.warning("⚠️ No usable columns found in mapping")
-                return pd.DataFrame()
 
             query = f"""
                 SELECT {', '.join(select_columns)}
@@ -589,6 +601,8 @@ class SnowflakeManager:
                 LIMIT 50000
             """
 
+            # Set session to handle large numbers safely
+            cursor.execute("ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'json'")
             cursor.execute(query)
             columns = [desc[0].lower() for desc in cursor.description]
             data = cursor.fetchall()
