@@ -322,6 +322,69 @@ def main():
         
     else:
         print("❌ Upload failed. Check error messages above.")
+def clean_dataframe(self, df):
+    """Clean and standardize the dataframe for your specific CSV format"""
+    print("🧹 Cleaning data...")
+        
+    # Map your CSV columns to database columns
+    column_mapping = {
+        'name': 'company_name',
+        'domain': 'website',
+        'year founded': 'founded_year',
+        'industry': 'industry',
+        'size range': 'company_size',
+        'locality': 'location',
+        'country': 'country',
+        'linkedin url': 'linkedin_url',
+        'current employee estimate': 'employee_count',
+        'total employee estimate': 'total_employee_estimate'
+    }
+        
+    # Rename columns if they exist
+    for old_name, new_name in column_mapping.items():
+        if old_name in df.columns:
+            df = df.rename(columns={old_name: new_name})
+        
+    # Remove unnamed index columns
+    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+        
+    # Remove rows with empty company names
+    df = df.dropna(subset=['company_name'])
+    df = df[df['company_name'].astype(str).str.strip() != '']
+    df = df[df['company_name'].astype(str) != 'nan']
+        
+    # Clean company names
+    df['company_name'] = df['company_name'].astype(str).str.strip()
+        
+    # Ensure numeric columns are properly typed
+    if 'employee_count' in df.columns:
+        df['employee_count'] = pd.to_numeric(df['employee_count'], errors='coerce')
+        
+    if 'total_employee_estimate' in df.columns:
+        df['total_employee_estimate'] = pd.to_numeric(df['total_employee_estimate'], errors='coerce')
+        
+    if 'founded_year' in df.columns:
+        df['founded_year'] = pd.to_numeric(df['founded_year'], errors='coerce')
+        
+    # Fill NaN values appropriately
+    string_columns = ['industry', 'company_size', 'location', 'country', 'website', 
+                         'linkedin_url']
+        
+    for col in string_columns:
+        if col in df.columns:
+            df[col] = df[col].fillna('').astype(str)
+        
+    # Truncate long strings to fit database constraints
+    df['company_name'] = df['company_name'].str[:255]
+    if 'industry' in df.columns:
+        df['industry'] = df['industry'].str[:100]
+    if 'location' in df.columns:
+        df['location'] = df['location'].str[:255]
+    if 'country' in df.columns:
+        df['country'] = df['country'].str[:100]
+        
+    print(f"✅ Cleaned data: {len(df)} companies remaining")
+    return df
 
 if __name__ == "__main__":
     main()

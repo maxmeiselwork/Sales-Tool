@@ -502,7 +502,46 @@ class SnowflakeManager:
         except Exception as e:
             st.error(f"❌ Failed to get analytics: {str(e)}")
             return {}
-    
+        
+    def get_all_companies_for_training(self) -> pd.DataFrame:
+        """Get all company data for AI training"""
+        if not self.is_connected():
+            return pd.DataFrame()
+        
+        try:
+            cursor = self.connection.cursor()
+            
+            # Get all companies with key information for training
+            query = """
+                SELECT 
+                    company_name, industry, company_size, employee_count,
+                    location, country, website, founded_year, 
+                    total_employee_estimate, linkedin_url
+                FROM companies 
+                WHERE company_name IS NOT NULL 
+                AND company_name != ''
+                ORDER BY employee_count DESC NULLS LAST
+            """
+            
+            cursor.execute(query)
+            
+            # Fetch data and column names
+            columns = [desc[0].lower() for desc in cursor.description]
+            data = cursor.fetchall()
+            cursor.close()
+            
+            if data:
+                df = pd.DataFrame(data, columns=columns)
+                st.info(f"📚 Retrieved {len(df):,} companies for AI training")
+                return df
+            else:
+                st.info("📭 No company data found for training")
+                return pd.DataFrame()
+                
+        except Exception as e:
+            st.error(f"❌ Failed to retrieve training data: {str(e)}")
+            return pd.DataFrame()
+        
     def close_connection(self):
         """Close the Snowflake connection"""
         if self.connection:

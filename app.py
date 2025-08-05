@@ -75,19 +75,36 @@ def main():
             st.error("❌ Snowflake Not Connected")
             return
         
-        # Training section
-        st.subheader("🎯 Model Training")
-        if st.button("📊 Train on Historical Data"):
+         # Training section
+        st.subheader("🏢 Company Knowledge Training")
+        if st.button("🧠 Train AI on Company Database"):
+            # Get all company data for training
+            with st.spinner("📊 Loading company data from Snowflake..."):
+                company_data = st.session_state.db.get_all_companies_for_training()
+            
+            if len(company_data) > 1000:
+                with st.spinner("🚀 Training AI model on company knowledge..."):
+                    success = st.session_state.model.train_on_company_data(company_data)
+                if success:
+                    st.success("✅ AI now knows your company database!")
+                    st.balloons()
+                    st.experimental_rerun()
+            else:
+                st.warning("⚠️ Need at least 1,000 companies to train effectively. Upload your data first!")
+        
+        # Historical scoring training
+        st.subheader("🎯 Scoring Improvement")
+        if st.button("📊 Train on Scoring History"):
             historical_data = st.session_state.db.get_historical_data()
             
             if len(historical_data) > 5:
-                with st.spinner("🚀 Training model..."):
+                with st.spinner("🚀 Training model on scoring patterns..."):
                     success = st.session_state.model.train_model(historical_data)
                 if success:
-                    st.success("✅ Training completed!")
+                    st.success("✅ Improved scoring accuracy!")
                     st.experimental_rerun()
             else:
-                st.warning("⚠️ Need at least 5 historical records to train. Score some buyers first!")
+                st.warning("⚠️ Need at least 5 historical scores to improve. Score some buyers first!")
         
         # Data statistics
         st.subheader("📈 Scoring Statistics")
