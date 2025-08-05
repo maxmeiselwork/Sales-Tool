@@ -1,24 +1,30 @@
 """
-Snowflake Database Manager
-Handles all database operations for buyer scoring data
+Dynamic Snowflake Database Manager
+Automatically discovers tables and adapts to any schema structure
 """
 
 import os
 import pandas as pd
 import snowflake.connector
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 import streamlit as st
 from dotenv import load_dotenv
+import json
 
 load_dotenv()
 
 class SnowflakeManager:
-    """Manages Snowflake database connections and operations"""
+    """Dynamic Snowflake manager that adapts to any table structure"""
     
     def __init__(self):
         self.connection = None
+        self.available_tables = []
+        self.table_schemas = {}
+        self.column_mappings = {}
         self.connect()
+        if self.is_connected():
+            self.discover_tables()
     
     def connect(self):
         """Establish connection to Snowflake"""
@@ -49,43 +55,291 @@ class SnowflakeManager:
         """Check if connected to Snowflake"""
         return self.connection is not None
     
+    def discover_tables(self):
+        """Discover all available tables and their schemas"""
+        if not self.is_connected():
+            return
+        
+        try:
+            cursor = self.connection.cursor()
+            
+            # Get all tables in the current schema
+            cursor.execute("""
+                SELECT TABLE_NAME, ROW_COUNT 
+                FROM INFORMATION_SCHEMA.TABLES 
+                WHERE TABLE_SCHEMA = CURRENT_SCHEMA()
+                AND TABLE_TYPE = 'BASE TABLE'
+                ORDER BY ROW_COUNT DESC NULLS LAST
+            """)
+            
+            tables_info = cursor.fetchall()
+            self.available_tables = []
+            
+            for table_name, row_count in tables_info:
+                # Get column information for each table
+                cursor.execute(f"""
+                    SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_NAME = '{table_name}'
+                    AND TABLE_SCHEMA = CURRENT_SCHEMA()
+                    ORDER BY ORDINAL_POSITION
+                """)
+                
+                columns_info = cursor.fetchall()
+                columns = []
+                for col_name, data_type, is_nullable in columns_info:
+                    columns.append({
+                        'name': col_name,
+                        'type': data_type,
+                        'nullable': is_nullable == 'YES'
+                    })
+                
+                table_info = {
+                    'name': table_name,
+                    'row_count': row_count or 0,
+                    'columns': columns
+                }
+                
+                self.available_tables.append(table_info)
+                self.table_schemas[table_name] = columns
+                
+                # Create intelligent column mapping
+                self.column_mappings[table_name] = self._create_column_mapping(columns)
+            
+            cursor.close()
+            st.info(f"📊 Discovered {len(self.available_tables)} tables")
+            
+        except Exception as e:
+            st.error(f"❌ Failed to discover tables: {str(e)}")
+    
+    def _create_column_mapping(self, columns: List[Dict]) -> Dict[str, str]:
+        """Create intelligent mapping from standard fields to actual column names"""
+        column_names = [col['name'].lower() for col in columns]
+        mapping = {}
+        
+        # Define mapping patterns for common fields
+        field_patterns = {
+            'company_name': ['company_name', 'name', 'company', 'organization', 'org_name', 'business_name'],
+            'industry': ['industry', 'sector', 'vertical', 'business_type', 'category'],
+            'employee_count': ['employee_count', 'employees', 'total_employee_estimate', 'staff_count', 'headcount', 'size'],
+            'location': ['location', 'city', 'address', 'headquarters', 'hq_location'],
+            'country': ['country', 'nation', 'region'],
+            'website': ['website', 'url', 'domain', 'web_address', 'site'],
+            'revenue': ['revenue', 'sales', 'turnover', 'annual_revenue'],
+            'founded_year': ['founded_year', 'established', 'founded', 'year_founded', 'incorporation_year'],
+            'description': ['description', 'about', 'overview', 'summary', 'profile'],
+            'linkedin_url': ['linkedin_url', 'linkedin', 'linkedin_profile'],
+            'phone': ['phone', 'telephone', 'phone_number', 'contact_phone', 'phone_normalized'],
+            'email': ['email', 'contact_email', 'email_address', 'email_normalized'],
+            'company_size': ['company_size', 'size_category', 'business_size']
+        }
+        
+        # Find best matches
+        for standard_field, patterns in field_patterns.items():
+            best_match = None
+            for pattern in patterns:
+                for col_name in column_names:
+                    if pattern.lower() in col_name or col_name in pattern.lower():
+                        best_match = col_name.upper()
+                        break
+                if best_match:
+                    break
+            
+            if best_match:
+                mapping[standard_field] = best_match
+        
+        return mapping
+    
+    def get_available_tables(self) -> List[Dict]:
+        """Get list of available tables with metadata"""
+        return self.available_tables
+    
+    def get_table_schema(self, table_name: str) -> List[Dict]:
+        """Get schema for a specific table"""
+        return self.table_schemas.get(table_name, [])
+    
+    def get_table_preview(self, table_name: str, limit: int = 10) -> pd.DataFrame:
+        """Get a preview of data from any table"""
+        if not self.is_connected():
+            return pd.DataFrame()
+        
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute(f"SELECT * FROM {table_name} LIMIT {limit}")
+            
+            columns = [desc[0].lower() for desc in cursor.description]
+            data = cursor.fetchall()
+            cursor.close()
+            
+            if data:
+                return pd.DataFrame(data, columns=columns)
+            return pd.DataFrame()
+            
+        except Exception as e:
+            st.error(f"❌ Failed to preview table {table_name}: {str(e)}")
+            return pd.DataFrame()
+    
+    def get_companies_for_scoring(self, table_name: str, limit: int = 100, filters: Dict = None) -> pd.DataFrame:
+        """Get companies from any selected table for scoring"""
+        if not self.is_connected():
+            return pd.DataFrame()
+        
+        try:
+            cursor = self.connection.cursor()
+            mapping = self.column_mappings.get(table_name, {})
+            
+            # Build SELECT clause using available columns
+            select_columns = []
+            for standard_field, actual_column in mapping.items():
+                if actual_column:
+                    select_columns.append(f"{actual_column} as {standard_field}")
+            
+            # If no mapping found, get all columns
+            if not select_columns:
+                select_columns = ["*"]
+            
+            # Build WHERE clause based on filters
+            where_conditions = ["1=1"]  # Always true condition
+            params = []
+            
+            if filters and mapping:
+                if filters.get('industry') and mapping.get('industry'):
+                    where_conditions.append(f"LOWER({mapping['industry']}) LIKE LOWER(%s)")
+                    params.append(f"%{filters['industry']}%")
+                
+                if filters.get('min_employees') and mapping.get('employee_count'):
+                    where_conditions.append(f"{mapping['employee_count']} >= %s")
+                    params.append(filters['min_employees'])
+                
+                if filters.get('max_employees') and mapping.get('employee_count'):
+                    where_conditions.append(f"{mapping['employee_count']} <= %s")
+                    params.append(filters['max_employees'])
+                
+                if filters.get('location'):
+                    location_conditions = []
+                    if mapping.get('location'):
+                        location_conditions.append(f"LOWER({mapping['location']}) LIKE LOWER(%s)")
+                        params.append(f"%{filters['location']}%")
+                    if mapping.get('country'):
+                        location_conditions.append(f"LOWER({mapping['country']}) LIKE LOWER(%s)")
+                        params.append(f"%{filters['location']}%")
+                    
+                    if location_conditions:
+                        where_conditions.append(f"({' OR '.join(location_conditions)})")
+            
+            where_clause = " AND ".join(where_conditions)
+            
+            # Build the query
+            query = f"""
+                SELECT {', '.join(select_columns)}
+                FROM {table_name} 
+                WHERE {where_clause}
+                ORDER BY RANDOM()
+                LIMIT {limit}
+            """
+            
+            cursor.execute(query, params)
+            
+            # Fetch data and column names
+            columns = [desc[0].lower() for desc in cursor.description]
+            data = cursor.fetchall()
+            cursor.close()
+            
+            if data:
+                df = pd.DataFrame(data, columns=columns)
+                
+                # Post-process location if we have both city and country
+                if 'location' in df.columns and 'country' in df.columns:
+                    df['location'] = df.apply(lambda row: 
+                        f"{row['location']}, {row['country']}" if pd.notna(row['location']) and pd.notna(row['country'])
+                        else row['location'] if pd.notna(row['location'])
+                        else row['country'] if pd.notna(row['country'])
+                        else 'Unknown', axis=1)
+                
+                st.info(f"📊 Retrieved {len(df)} companies from table '{table_name}'")
+                return df
+            else:
+                st.info("📭 No companies found matching your criteria")
+                return pd.DataFrame()
+                
+        except Exception as e:
+            st.error(f"❌ Failed to retrieve companies from {table_name}: {str(e)}")
+            return pd.DataFrame()
+    
+    def get_company_stats(self, table_name: str) -> Dict:
+        """Get statistics about companies in the selected table"""
+        if not self.is_connected():
+            return {}
+        
+        try:
+            cursor = self.connection.cursor()
+            mapping = self.column_mappings.get(table_name, {})
+            stats = {}
+            
+            # Total companies
+            company_name_col = mapping.get('company_name', 'COMPANY_NAME')
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name} WHERE {company_name_col} IS NOT NULL")
+            stats['total_companies'] = cursor.fetchone()[0]
+            
+            # Companies by industry (top 10) if industry column exists
+            if mapping.get('industry'):
+                cursor.execute(f"""
+                    SELECT {mapping['industry']}, COUNT(*) as count 
+                    FROM {table_name} 
+                    WHERE {mapping['industry']} IS NOT NULL AND {mapping['industry']} != ''
+                    GROUP BY {mapping['industry']} 
+                    ORDER BY count DESC 
+                    LIMIT 10
+                """)
+                
+                industries = []
+                for row in cursor.fetchall():
+                    industries.append({'industry': row[0], 'count': row[1]})
+                stats['top_industries'] = industries
+            
+            # Companies by size if employee count column exists
+            if mapping.get('employee_count'):
+                cursor.execute(f"""
+                    SELECT 
+                        CASE 
+                            WHEN {mapping['employee_count']} < 10 THEN 'Startup (1-9)'
+                            WHEN {mapping['employee_count']} < 50 THEN 'Small (10-49)'
+                            WHEN {mapping['employee_count']} < 250 THEN 'Medium (50-249)'
+                            WHEN {mapping['employee_count']} < 1000 THEN 'Large (250-999)'
+                            ELSE 'Enterprise (1000+)'
+                        END as size_category,
+                        COUNT(*) as count
+                    FROM {table_name} 
+                    WHERE {mapping['employee_count']} IS NOT NULL
+                    GROUP BY size_category
+                    ORDER BY count DESC
+                """)
+                
+                sizes = []
+                for row in cursor.fetchall():
+                    sizes.append({'size': row[0], 'count': row[1]})
+                stats['company_sizes'] = sizes
+            
+            cursor.close()
+            return stats
+            
+        except Exception as e:
+            st.error(f"❌ Failed to get company stats for {table_name}: {str(e)}")
+            return {}
+    
     def create_tables(self):
-        """Create necessary tables if they don't exist"""
+        """Create necessary application tables if they don't exist"""
         if not self.is_connected():
             return False
         
         try:
             cursor = self.connection.cursor()
             
-            # Create companies table (for raw company data)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS companies (
-                    id NUMBER AUTOINCREMENT PRIMARY KEY,
-                    company_name VARCHAR(255) NOT NULL,
-                    industry VARCHAR(100),
-                    company_size VARCHAR(50),
-                    employee_count NUMBER,
-                    revenue VARCHAR(50),
-                    location VARCHAR(255),
-                    website VARCHAR(255),
-                    domain VARCHAR(255),
-                    contact_name VARCHAR(255),
-                    contact_title VARCHAR(255),
-                    contact_email VARCHAR(255),
-                    phone VARCHAR(50),
-                    linkedin_url VARCHAR(500),
-                    funding_stage VARCHAR(50),
-                    founded_year NUMBER,
-                    description TEXT,
-                    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
-                    batch_id VARCHAR(100)
-                )
-            """)
-            
             # Create buyers table (for scored results)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS buyers (
                     id NUMBER AUTOINCREMENT PRIMARY KEY,
+                    source_table VARCHAR(100),
                     company_name VARCHAR(255) NOT NULL,
                     industry VARCHAR(100),
                     company_size VARCHAR(50),
@@ -111,6 +365,7 @@ class SnowflakeManager:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS training_data (
                     id NUMBER AUTOINCREMENT PRIMARY KEY,
+                    source_table VARCHAR(100),
                     company_name VARCHAR(255) NOT NULL,
                     industry VARCHAR(100),
                     company_size VARCHAR(50),
@@ -127,133 +382,14 @@ class SnowflakeManager:
             """)
             
             cursor.close()
-            st.success("✅ Database tables ready")
+            st.success("✅ Application tables ready")
             return True
             
         except Exception as e:
             st.error(f"❌ Failed to create tables: {str(e)}")
             return False
     
-    def get_companies_for_scoring(self, limit: int = 100, filters: Dict = None) -> pd.DataFrame:
-        """Get companies from the database for scoring"""
-        if not self.is_connected():
-            return pd.DataFrame()
-        
-        try:
-            cursor = self.connection.cursor()
-            
-            # Build WHERE clause based on filters
-            where_conditions = []
-            params = []
-            
-            if filters:
-                if filters.get('industry'):
-                    where_conditions.append("LOWER(industry) LIKE LOWER(%s)")
-                    params.append(f"%{filters['industry']}%")
-                
-                if filters.get('min_employees'):
-                    where_conditions.append("employee_count >= %s")
-                    params.append(filters['min_employees'])
-                
-                if filters.get('max_employees'):
-                    where_conditions.append("employee_count <= %s")
-                    params.append(filters['max_employees'])
-                
-                if filters.get('location'):
-                    where_conditions.append("LOWER(location) LIKE LOWER(%s)")
-                    params.append(f"%{filters['location']}%")
-            
-            where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
-            
-            # Get companies
-            query = f"""
-                SELECT 
-                    company_name, industry, company_size, employee_count,
-                    revenue, location, website, contact_name, contact_title,
-                    contact_email, description
-                FROM companies 
-                WHERE {where_clause}
-                ORDER BY RANDOM()  -- Get random sample
-                LIMIT {limit}
-            """
-            
-            cursor.execute(query, params)
-            
-            # Fetch data and column names
-            columns = [desc[0].lower() for desc in cursor.description]
-            data = cursor.fetchall()
-            cursor.close()
-            
-            if data:
-                df = pd.DataFrame(data, columns=columns)
-                st.info(f"📊 Retrieved {len(df)} companies from Snowflake")
-                return df
-            else:
-                st.info("📭 No companies found matching your criteria")
-                return pd.DataFrame()
-                
-        except Exception as e:
-            st.error(f"❌ Failed to retrieve companies: {str(e)}")
-            return pd.DataFrame()
-    
-    def get_company_stats(self) -> Dict:
-        """Get statistics about companies in the database"""
-        if not self.is_connected():
-            return {}
-        
-        try:
-            cursor = self.connection.cursor()
-            stats = {}
-            
-            # Total companies
-            cursor.execute("SELECT COUNT(*) FROM companies")
-            stats['total_companies'] = cursor.fetchone()[0]
-            
-            # Companies by industry (top 10)
-            cursor.execute("""
-                SELECT industry, COUNT(*) as count 
-                FROM companies 
-                WHERE industry IS NOT NULL AND industry != ''
-                GROUP BY industry 
-                ORDER BY count DESC 
-                LIMIT 10
-            """)
-            
-            industries = []
-            for row in cursor.fetchall():
-                industries.append({'industry': row[0], 'count': row[1]})
-            stats['top_industries'] = industries
-            
-            # Companies by size
-            cursor.execute("""
-                SELECT 
-                    CASE 
-                        WHEN employee_count < 10 THEN 'Startup (1-9)'
-                        WHEN employee_count < 50 THEN 'Small (10-49)'
-                        WHEN employee_count < 250 THEN 'Medium (50-249)'
-                        WHEN employee_count < 1000 THEN 'Large (250-999)'
-                        ELSE 'Enterprise (1000+)'
-                    END as size_category,
-                    COUNT(*) as count
-                FROM companies 
-                WHERE employee_count IS NOT NULL
-                GROUP BY size_category
-                ORDER BY count DESC
-            """)
-            
-            sizes = []
-            for row in cursor.fetchall():
-                sizes.append({'size': row[0], 'count': row[1]})
-            stats['company_sizes'] = sizes
-            
-            cursor.close()
-            return stats
-            
-        except Exception as e:
-            st.error(f"❌ Failed to get company stats: {str(e)}")
-            return {}
-    
-    def save_scoring_results(self, scored_df: pd.DataFrame, product_description: str) -> bool:
+    def save_scoring_results(self, scored_df: pd.DataFrame, product_description: str, source_table: str) -> bool:
         """Save scored results to Snowflake"""
         if not self.is_connected():
             st.warning("⚠️ No Snowflake connection - results not saved to database")
@@ -272,14 +408,15 @@ class SnowflakeManager:
             for _, row in scored_df.iterrows():
                 cursor.execute("""
                     INSERT INTO buyers (
-                        company_name, industry, company_size, revenue, location,
+                        source_table, company_name, industry, company_size, revenue, location,
                         contact_name, contact_title, contact_email, linkedin_url, website,
                         employee_count, funding_stage, current_tools,
                         score, reason, product_description, upload_session
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                 """, (
+                    source_table,
                     row.get('company_name', ''),
                     row.get('industry', ''),
                     row.get('company_size', ''),
@@ -322,7 +459,7 @@ class SnowflakeManager:
                 SELECT 
                     company_name, industry, company_size, revenue, location,
                     contact_name, contact_title, score, reason, product_description,
-                    scored_at
+                    scored_at, source_table
                 FROM buyers 
                 WHERE score IS NOT NULL 
                 ORDER BY scored_at DESC 
@@ -359,171 +496,37 @@ class SnowflakeManager:
             return count
             
         except Exception as e:
-            st.error(f"❌ Failed to get record count: {str(e)}")
+            # If buyers table doesn't exist yet, return 0
             return 0
     
-    def get_recent_sessions(self, limit: int = 10) -> List[Dict]:
-        """Get recent scoring sessions"""
-        if not self.is_connected():
-            return []
-        
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("""
-                SELECT 
-                    upload_session,
-                    COUNT(*) as buyer_count,
-                    AVG(score) as avg_score,
-                    MIN(scored_at) as session_date,
-                    product_description
-                FROM buyers 
-                WHERE upload_session IS NOT NULL
-                GROUP BY upload_session, product_description
-                ORDER BY session_date DESC
-                LIMIT %s
-            """, (limit,))
-            
-            columns = [desc[0].lower() for desc in cursor.description]
-            data = cursor.fetchall()
-            cursor.close()
-            
-            sessions = []
-            for row in data:
-                sessions.append(dict(zip(columns, row)))
-            
-            return sessions
-            
-        except Exception as e:
-            st.error(f"❌ Failed to retrieve sessions: {str(e)}")
-            return []
-    
-    def save_training_feedback(self, feedback_data: List[Dict]) -> bool:
-        """Save user feedback for model improvement"""
-        if not self.is_connected():
-            return False
-        
-        try:
-            cursor = self.connection.cursor()
-            
-            for feedback in feedback_data:
-                cursor.execute("""
-                    INSERT INTO training_data (
-                        company_name, industry, company_size, revenue, location,
-                        product_description, original_score, corrected_score,
-                        original_reason, corrected_reason, user_id
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                    )
-                """, (
-                    feedback.get('company_name', ''),
-                    feedback.get('industry', ''),
-                    feedback.get('company_size', ''),
-                    feedback.get('revenue', ''),
-                    feedback.get('location', ''),
-                    feedback.get('product_description', ''),
-                    feedback.get('original_score', 0),
-                    feedback.get('corrected_score', 0),
-                    feedback.get('original_reason', ''),
-                    feedback.get('corrected_reason', ''),
-                    feedback.get('user_id', 'anonymous')
-                ))
-            
-            self.connection.commit()
-            cursor.close()
-            
-            st.success(f"✅ Saved {len(feedback_data)} feedback records")
-            return True
-            
-        except Exception as e:
-            st.error(f"❌ Failed to save feedback: {str(e)}")
-            return False
-    
-    def get_analytics_data(self) -> Dict:
-        """Get analytics data for dashboard"""
-        if not self.is_connected():
-            return {}
-        
-        try:
-            cursor = self.connection.cursor()
-            
-            analytics = {}
-            
-            # Total buyers scored
-            cursor.execute("SELECT COUNT(*) FROM buyers")
-            analytics['total_buyers'] = cursor.fetchone()[0]
-            
-            # Average score
-            cursor.execute("SELECT AVG(score) FROM buyers WHERE score IS NOT NULL")
-            result = cursor.fetchone()
-            analytics['avg_score'] = round(result[0], 2) if result[0] else 0
-            
-            # Score distribution
-            cursor.execute("""
-                SELECT 
-                    CASE 
-                        WHEN score >= 8 THEN 'Hot (8-10)'
-                        WHEN score >= 6 THEN 'Warm (6-7)'
-                        WHEN score >= 4 THEN 'Cold (4-5)'
-                        ELSE 'Poor (<4)'
-                    END as score_category,
-                    COUNT(*) as count
-                FROM buyers 
-                WHERE score IS NOT NULL
-                GROUP BY score_category
-            """)
-            
-            score_dist = {}
-            for row in cursor.fetchall():
-                score_dist[row[0]] = row[1]
-            analytics['score_distribution'] = score_dist
-            
-            # Top industries
-            cursor.execute("""
-                SELECT industry, COUNT(*) as count, AVG(score) as avg_score
-                FROM buyers 
-                WHERE industry IS NOT NULL AND industry != ''
-                GROUP BY industry
-                ORDER BY count DESC
-                LIMIT 10
-            """)
-            
-            industries = []
-            for row in cursor.fetchall():
-                industries.append({
-                    'industry': row[0],
-                    'count': row[1],
-                    'avg_score': round(row[2], 2) if row[2] else 0
-                })
-            analytics['top_industries'] = industries
-            
-            cursor.close()
-            return analytics
-            
-        except Exception as e:
-            st.error(f"❌ Failed to get analytics: {str(e)}")
-            return {}
-        
-    def get_all_companies_for_training(self) -> pd.DataFrame:
-        """Get all company data for AI training"""
+    def get_all_companies_for_training(self, table_name: str) -> pd.DataFrame:
+        """Get all company data from selected table for AI training"""
         if not self.is_connected():
             return pd.DataFrame()
         
         try:
             cursor = self.connection.cursor()
+            mapping = self.column_mappings.get(table_name, {})
             
-            # Get all companies with key information for training
-            query = """
-                SELECT 
-                    company_name, industry, company_size, employee_count,
-                    location, country, website, founded_year, 
-                    total_employee_estimate, linkedin_url
-                FROM companies 
-                WHERE company_name IS NOT NULL 
-                AND company_name != ''
-                ORDER BY employee_count DESC NULLS LAST
-            """
+            # Build SELECT clause using available mapped columns
+            select_columns = []
+            for standard_field, actual_column in mapping.items():
+                if actual_column:
+                    select_columns.append(f"{actual_column} as {standard_field}")
             
-            cursor.execute(query)
+            # If no mapping found, get all columns
+            if not select_columns:
+                cursor.execute(f"SELECT * FROM {table_name} WHERE ROWNUM <= 50000")
+            else:
+                query = f"""
+                    SELECT {', '.join(select_columns)}
+                    FROM {table_name} 
+                    WHERE {mapping.get('company_name', 'COMPANY_NAME')} IS NOT NULL 
+                    AND {mapping.get('company_name', 'COMPANY_NAME')} != ''
+                    ORDER BY {mapping.get('employee_count', 'ROWNUM')} DESC NULLS LAST
+                    LIMIT 50000
+                """
+                cursor.execute(query)
             
             # Fetch data and column names
             columns = [desc[0].lower() for desc in cursor.description]
@@ -532,16 +535,28 @@ class SnowflakeManager:
             
             if data:
                 df = pd.DataFrame(data, columns=columns)
-                st.info(f"📚 Retrieved {len(df):,} companies for AI training")
+                st.info(f"📚 Retrieved {len(df):,} companies from '{table_name}' for AI training")
                 return df
             else:
-                st.info("📭 No company data found for training")
+                st.info(f"📭 No company data found in table '{table_name}' for training")
                 return pd.DataFrame()
                 
         except Exception as e:
-            st.error(f"❌ Failed to retrieve training data: {str(e)}")
+            st.error(f"❌ Failed to retrieve training data from {table_name}: {str(e)}")
             return pd.DataFrame()
+    
+    def get_column_mapping_info(self, table_name: str) -> Dict:
+        """Get information about how columns are mapped for a table"""
+        mapping = self.column_mappings.get(table_name, {})
+        schema = self.table_schemas.get(table_name, [])
         
+        return {
+            'mapping': mapping,
+            'schema': schema,
+            'mapped_fields': len([v for v in mapping.values() if v]),
+            'total_columns': len(schema)
+        }
+    
     def close_connection(self):
         """Close the Snowflake connection"""
         if self.connection:

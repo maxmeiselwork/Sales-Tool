@@ -20,6 +20,7 @@ class SnowflakeUploader:
     
     def __init__(self):
         self.connection = None
+        self.csv_encoding = 'utf-8'  # Default encoding
         self.connect()
     
     def connect(self):
@@ -48,36 +49,33 @@ class SnowflakeUploader:
             sys.exit(1)
     
     def create_company_table(self):
-        """Create the companies table for your raw data"""
+        """Create the companies table for your raw data with UPPERCASE column names"""
         try:
             cursor = self.connection.cursor()
             
-            # Create companies table (separate from scored buyers)
+            # Drop table if it exists to ensure clean structure
+            cursor.execute("DROP TABLE IF EXISTS companies")
+            
+            # Create companies table with UPPERCASE column names (Snowflake standard)
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS companies (
-                    id NUMBER AUTOINCREMENT PRIMARY KEY,
-                    company_name VARCHAR(255) NOT NULL,
-                    industry VARCHAR(100),
-                    company_size VARCHAR(50),
-                    employee_count NUMBER,
-                    revenue VARCHAR(50),
-                    location VARCHAR(255),
-                    website VARCHAR(255),
-                    domain VARCHAR(255),
-                    contact_name VARCHAR(255),
-                    contact_title VARCHAR(255),
-                    contact_email VARCHAR(255),
-                    phone VARCHAR(50),
-                    linkedin_url VARCHAR(500),
-                    funding_stage VARCHAR(50),
-                    founded_year NUMBER,
-                    description TEXT,
-                    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
-                    batch_id VARCHAR(100)
+                CREATE TABLE companies (
+                    ID NUMBER AUTOINCREMENT PRIMARY KEY,
+                    COMPANY_NAME VARCHAR(255) NOT NULL,
+                    DOMAIN VARCHAR(255),
+                    YEAR_FOUNDED NUMBER,
+                    INDUSTRY VARCHAR(100),
+                    SIZE_RANGE VARCHAR(50),
+                    LOCALITY VARCHAR(255),
+                    COUNTRY VARCHAR(100),
+                    LINKEDIN_URL VARCHAR(500),
+                    CURRENT_EMPLOYEE_ESTIMATE NUMBER,
+                    TOTAL_EMPLOYEE_ESTIMATE NUMBER,
+                    UPLOADED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+                    BATCH_ID VARCHAR(100)
                 )
             """)
             
-            print("✅ Companies table ready")
+            print("✅ Companies table created with proper structure")
             cursor.close()
             
         except Exception as e:
@@ -85,27 +83,57 @@ class SnowflakeUploader:
             sys.exit(1)
     
     def validate_csv(self, csv_path):
-        """Validate CSV structure and show info"""
+        """Validate CSV structure and show info - flexible validation"""
         try:
             print(f"📂 Validating {csv_path}...")
             
-            # Read first few rows to check structure
-            sample_df = pd.read_csv(csv_path, nrows=5)
+            # Try different encodings to handle various file formats
+            encodings_to_try = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252', 'iso-8859-1']
+            sample_df = None
+            working_encoding = None
+            
+            for encoding in encodings_to_try:
+                try:
+                    sample_df = pd.read_csv(csv_path, nrows=5, encoding=encoding)
+                    working_encoding = encoding
+                    print(f"✅ Successfully read CSV with {encoding} encoding")
+                    break
+                except UnicodeDecodeError:
+                    continue
+                except Exception as e:
+                    if "codec" not in str(e).lower():
+                        # If it's not an encoding error, re-raise it
+                        raise e
+                    continue
+            
+            if sample_df is None:
+                print(f"❌ Could not read CSV with any of these encodings: {encodings_to_try}")
+                return False
+            
+            # Store the working encoding for later use
+            self.csv_encoding = working_encoding
             
             print(f"📋 CSV Columns: {list(sample_df.columns)}")
             print(f"📊 Sample data:")
             print(sample_df.head())
             
-            # Check for required columns
-            required_cols = ['company_name']
-            missing_cols = [col for col in required_cols if col not in sample_df.columns]
+            # Check for at least one identifiable company column
+            possible_name_columns = ['name', 'company_name', 'Company', 'company', 'Company Name']
+            has_company_column = any(col in sample_df.columns for col in possible_name_columns)
             
-            if missing_cols:
-                print(f"❌ Missing required columns: {missing_cols}")
+            if not has_company_column:
+                print(f"❌ No company name column found. Looking for one of: {possible_name_columns}")
+                print(f"Available columns: {list(sample_df.columns)}")
                 return False
             
-            # Get total row count
-            total_rows = sum(1 for line in open(csv_path)) - 1  # Subtract header
+            # Get total row count using the working encoding
+            try:
+                with open(csv_path, 'r', encoding=working_encoding) as f:
+                    total_rows = sum(1 for line in f) - 1  # Subtract header
+            except:
+                # Fallback method
+                total_rows = len(pd.read_csv(csv_path, encoding=working_encoding))
+            
             print(f"📈 Total companies to upload: {total_rows:,}")
             
             return True
@@ -115,33 +143,30 @@ class SnowflakeUploader:
             return False
     
     def clean_dataframe(self, df):
-        """Clean and standardize the dataframe"""
+        """Clean and standardize the dataframe for your specific CSV format"""
         print("🧹 Cleaning data...")
         
-        # Remove rows with empty company names
-        df = df.dropna(subset=['company_name'])
-        df = df[df['company_name'].str.strip() != '']
+        # Reset index to avoid pandas warning
+        df = df.reset_index(drop=True)
         
-        # Clean company names
-        df['company_name'] = df['company_name'].str.strip()
+        # Remove unnamed index columns first
+        df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
         
-        # Standardize column names and handle missing columns
+        # Map your CSV columns to database columns (UPPERCASE to match Snowflake)
         column_mapping = {
-            'Company': 'company_name',
-            'Company Name': 'company_name',
-            'Industry': 'industry',
-            'Size': 'company_size',
-            'Employee Count': 'employee_count',
-            'Employees': 'employee_count',
-            'Location': 'location',
-            'City': 'location',
-            'Revenue': 'revenue',
-            'Website': 'website',
-            'Domain': 'domain',
-            'Contact Name': 'contact_name',
-            'Contact': 'contact_name',
-            'Title': 'contact_title',
-            'Email': 'contact_email'
+            'name': 'COMPANY_NAME',
+            'Company': 'COMPANY_NAME',
+            'company': 'COMPANY_NAME',
+            'Company Name': 'COMPANY_NAME',
+            'domain': 'DOMAIN',
+            'year founded': 'YEAR_FOUNDED',
+            'industry': 'INDUSTRY',
+            'size range': 'SIZE_RANGE',
+            'locality': 'LOCALITY',
+            'country': 'COUNTRY',
+            'linkedin url': 'LINKEDIN_URL',
+            'current employee estimate': 'CURRENT_EMPLOYEE_ESTIMATE',
+            'total employee estimate': 'TOTAL_EMPLOYEE_ESTIMATE'
         }
         
         # Rename columns if they exist
@@ -149,29 +174,58 @@ class SnowflakeUploader:
             if old_name in df.columns:
                 df = df.rename(columns={old_name: new_name})
         
+        # Ensure we have a company_name column
+        if 'COMPANY_NAME' not in df.columns:
+            print("❌ No company name column found after mapping")
+            print(f"Available columns after mapping: {list(df.columns)}")
+            return pd.DataFrame()  # Return empty dataframe
+        
+        # Remove rows with empty company names
+        df = df.dropna(subset=['COMPANY_NAME'])
+        df = df[df['COMPANY_NAME'].astype(str).str.strip() != '']
+        df = df[df['COMPANY_NAME'].astype(str) != 'nan']
+        
+        # Clean company names
+        df['COMPANY_NAME'] = df['COMPANY_NAME'].astype(str).str.strip()
+        
         # Ensure numeric columns are properly typed
-        if 'employee_count' in df.columns:
-            df['employee_count'] = pd.to_numeric(df['employee_count'], errors='coerce')
+        numeric_columns = ['YEAR_FOUNDED', 'CURRENT_EMPLOYEE_ESTIMATE', 'TOTAL_EMPLOYEE_ESTIMATE']
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
         
-        if 'founded_year' in df.columns:
-            df['founded_year'] = pd.to_numeric(df['founded_year'], errors='coerce')
-        
-        # Fill NaN values appropriately
-        string_columns = ['industry', 'company_size', 'location', 'website', 'domain', 
-                         'contact_name', 'contact_title', 'contact_email', 'revenue']
-        
+        # Fill NaN values appropriately for string columns
+        string_columns = ['DOMAIN', 'INDUSTRY', 'SIZE_RANGE', 'LOCALITY', 'COUNTRY', 'LINKEDIN_URL']
         for col in string_columns:
             if col in df.columns:
-                df[col] = df[col].fillna('')
+                df[col] = df[col].fillna('').astype(str)
         
         # Truncate long strings to fit database constraints
-        df['company_name'] = df['company_name'].str[:255]
-        if 'industry' in df.columns:
-            df['industry'] = df['industry'].str[:100]
-        if 'location' in df.columns:
-            df['location'] = df['location'].str[:255]
+        df['COMPANY_NAME'] = df['COMPANY_NAME'].str[:255]
+        if 'INDUSTRY' in df.columns:
+            df['INDUSTRY'] = df['INDUSTRY'].str[:100]
+        if 'LOCALITY' in df.columns:
+            df['LOCALITY'] = df['LOCALITY'].str[:255]
+        if 'COUNTRY' in df.columns:
+            df['COUNTRY'] = df['COUNTRY'].str[:100]
+        if 'DOMAIN' in df.columns:
+            df['DOMAIN'] = df['DOMAIN'].str[:255]
+        if 'LINKEDIN_URL' in df.columns:
+            df['LINKEDIN_URL'] = df['LINKEDIN_URL'].str[:500]
+        if 'SIZE_RANGE' in df.columns:
+            df['SIZE_RANGE'] = df['SIZE_RANGE'].str[:50]
+        
+        # Only keep columns that exist in the database table
+        expected_columns = ['COMPANY_NAME', 'DOMAIN', 'YEAR_FOUNDED', 'INDUSTRY', 'SIZE_RANGE', 
+                           'LOCALITY', 'COUNTRY', 'LINKEDIN_URL', 'CURRENT_EMPLOYEE_ESTIMATE', 
+                           'TOTAL_EMPLOYEE_ESTIMATE']
+        
+        # Keep only columns that exist in both the dataframe and expected columns
+        final_columns = [col for col in expected_columns if col in df.columns]
+        df = df[final_columns]
         
         print(f"✅ Cleaned data: {len(df)} companies remaining")
+        print(f"📋 Final columns: {list(df.columns)}")
         return df
     
     def upload_in_batches(self, csv_path, batch_size=10000):
@@ -180,8 +234,14 @@ class SnowflakeUploader:
             batch_id = datetime.now().strftime("%Y%m%d_%H%M%S")
             print(f"🚀 Starting batch upload (Batch ID: {batch_id})")
             
-            # Get total number of rows
-            total_rows = sum(1 for line in open(csv_path)) - 1
+            # Get total number of rows using the correct encoding
+            try:
+                with open(csv_path, 'r', encoding=self.csv_encoding) as f:
+                    total_rows = sum(1 for line in f) - 1  # Subtract header
+            except:
+                # Fallback method
+                total_rows = len(pd.read_csv(csv_path, encoding=self.csv_encoding))
+            
             total_batches = math.ceil(total_rows / batch_size)
             
             print(f"📊 Total rows: {total_rows:,}")
@@ -190,8 +250,8 @@ class SnowflakeUploader:
             
             uploaded_count = 0
             
-            # Process in chunks
-            for batch_num, chunk_df in enumerate(pd.read_csv(csv_path, chunksize=batch_size), 1):
+            # Process in chunks using the correct encoding
+            for batch_num, chunk_df in enumerate(pd.read_csv(csv_path, chunksize=batch_size, encoding=self.csv_encoding), 1):
                 print(f"\n📦 Processing batch {batch_num}/{total_batches}")
                 
                 # Clean the chunk
@@ -201,9 +261,12 @@ class SnowflakeUploader:
                     print("⚠️ No valid data in this batch, skipping...")
                     continue
                 
-                # Add batch metadata
-                clean_chunk['batch_id'] = batch_id
-                clean_chunk['uploaded_at'] = datetime.now()
+                # Add batch metadata (UPPERCASE column names)
+                clean_chunk['BATCH_ID'] = batch_id
+                clean_chunk['UPLOADED_AT'] = datetime.now()
+                
+                # Debug: Print column names before upload
+                print(f"🔍 DataFrame columns: {list(clean_chunk.columns)}")
                 
                 # Upload to Snowflake
                 try:
@@ -244,15 +307,15 @@ class SnowflakeUploader:
             cursor.execute("SELECT COUNT(*) FROM companies")
             total_count = cursor.fetchone()[0]
             
-            # Count records from this batch
-            cursor.execute("SELECT COUNT(*) FROM companies WHERE batch_id = %s", (batch_id,))
+            # Count records from this batch (UPPERCASE column names)
+            cursor.execute("SELECT COUNT(*) FROM companies WHERE BATCH_ID = %s", (batch_id,))
             batch_count = cursor.fetchone()[0]
             
-            # Sample some records
+            # Sample some records (UPPERCASE column names)
             cursor.execute("""
-                SELECT company_name, industry, location 
+                SELECT COMPANY_NAME, INDUSTRY, LOCALITY, COUNTRY
                 FROM companies 
-                WHERE batch_id = %s 
+                WHERE BATCH_ID = %s 
                 LIMIT 5
             """, (batch_id,))
             
@@ -262,8 +325,8 @@ class SnowflakeUploader:
             print(f"Total companies in database: {total_count:,}")
             print(f"Companies from this batch: {batch_count:,}")
             print(f"\n📋 Sample records:")
-            for i, (name, industry, location) in enumerate(samples, 1):
-                print(f"{i}. {name} | {industry} | {location}")
+            for i, (name, industry, locality, country) in enumerate(samples, 1):
+                print(f"{i}. {name} | {industry} | {locality}, {country}")
             
             cursor.close()
             
@@ -322,69 +385,6 @@ def main():
         
     else:
         print("❌ Upload failed. Check error messages above.")
-def clean_dataframe(self, df):
-    """Clean and standardize the dataframe for your specific CSV format"""
-    print("🧹 Cleaning data...")
-        
-    # Map your CSV columns to database columns
-    column_mapping = {
-        'name': 'company_name',
-        'domain': 'website',
-        'year founded': 'founded_year',
-        'industry': 'industry',
-        'size range': 'company_size',
-        'locality': 'location',
-        'country': 'country',
-        'linkedin url': 'linkedin_url',
-        'current employee estimate': 'employee_count',
-        'total employee estimate': 'total_employee_estimate'
-    }
-        
-    # Rename columns if they exist
-    for old_name, new_name in column_mapping.items():
-        if old_name in df.columns:
-            df = df.rename(columns={old_name: new_name})
-        
-    # Remove unnamed index columns
-    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
-        
-    # Remove rows with empty company names
-    df = df.dropna(subset=['company_name'])
-    df = df[df['company_name'].astype(str).str.strip() != '']
-    df = df[df['company_name'].astype(str) != 'nan']
-        
-    # Clean company names
-    df['company_name'] = df['company_name'].astype(str).str.strip()
-        
-    # Ensure numeric columns are properly typed
-    if 'employee_count' in df.columns:
-        df['employee_count'] = pd.to_numeric(df['employee_count'], errors='coerce')
-        
-    if 'total_employee_estimate' in df.columns:
-        df['total_employee_estimate'] = pd.to_numeric(df['total_employee_estimate'], errors='coerce')
-        
-    if 'founded_year' in df.columns:
-        df['founded_year'] = pd.to_numeric(df['founded_year'], errors='coerce')
-        
-    # Fill NaN values appropriately
-    string_columns = ['industry', 'company_size', 'location', 'country', 'website', 
-                         'linkedin_url']
-        
-    for col in string_columns:
-        if col in df.columns:
-            df[col] = df[col].fillna('').astype(str)
-        
-    # Truncate long strings to fit database constraints
-    df['company_name'] = df['company_name'].str[:255]
-    if 'industry' in df.columns:
-        df['industry'] = df['industry'].str[:100]
-    if 'location' in df.columns:
-        df['location'] = df['location'].str[:255]
-    if 'country' in df.columns:
-        df['country'] = df['country'].str[:100]
-        
-    print(f"✅ Cleaned data: {len(df)} companies remaining")
-    return df
 
 if __name__ == "__main__":
     main()
