@@ -83,19 +83,28 @@ class BuyerScoringModel:
         if company_row.get('industry'):
             parts.append(f"Industry: {company_row['industry']}")
         
-        if company_row.get('employee_count') and pd.notna(company_row['employee_count']):
-            emp_count = int(company_row['employee_count'])
-            parts.append(f"Employees: {emp_count:,}")
-            
-            # Add size category
-            if emp_count < 50:
-                parts.append("Size: Small startup/company")
-            elif emp_count < 500:
-                parts.append("Size: Medium company")
-            elif emp_count < 5000:
-                parts.append("Size: Large company")
-            else:
-                parts.append("Size: Enterprise corporation")
+        # Handle employee count (might be string due to large number handling)
+        employee_count = company_row.get('employee_count')
+        if employee_count and pd.notna(employee_count):
+            try:
+                if isinstance(employee_count, str):
+                    emp_count = int(employee_count)
+                else:
+                    emp_count = int(employee_count)
+                
+                parts.append(f"Employees: {emp_count:,}")
+                
+                # Add size category
+                if emp_count < 50:
+                    parts.append("Size: Small startup/company")
+                elif emp_count < 500:
+                    parts.append("Size: Medium company")
+                elif emp_count < 5000:
+                    parts.append("Size: Large company")
+                else:
+                    parts.append("Size: Enterprise corporation")
+            except (ValueError, TypeError):
+                parts.append(f"Employees: {employee_count}")
         
         if company_row.get('location'):
             parts.append(f"Location: {company_row['location']}")
@@ -104,17 +113,20 @@ class BuyerScoringModel:
             parts.append(f"Country: {company_row['country']}")
         
         if company_row.get('founded_year') and pd.notna(company_row['founded_year']):
-            year = int(company_row['founded_year'])
-            age = 2024 - year
-            parts.append(f"Founded: {year} ({age} years old)")
-            
-            # Add maturity insight
-            if age < 5:
-                parts.append("Maturity: Young startup")
-            elif age < 15:
-                parts.append("Maturity: Growing company")
-            else:
-                parts.append("Maturity: Established company")
+            try:
+                year = int(float(company_row['founded_year']))
+                age = 2024 - year
+                parts.append(f"Founded: {year} ({age} years old)")
+                
+                # Add maturity insight
+                if age < 5:
+                    parts.append("Maturity: Young startup")
+                elif age < 15:
+                    parts.append("Maturity: Growing company")
+                else:
+                    parts.append("Maturity: Established company")
+            except (ValueError, TypeError):
+                parts.append(f"Founded: {company_row['founded_year']}")
         
         if company_row.get('website'):
             parts.append(f"Website: {company_row['website']}")
@@ -154,16 +166,24 @@ class BuyerScoringModel:
 Business Analysis: This company operates in the {row.get('industry', 'unknown')} sector. """
                 
                 # Add business insights based on company characteristics
-                if row.get('employee_count') and pd.notna(row['employee_count']):
-                    emp_count = int(row['employee_count'])
-                    if emp_count < 50:
-                        training_example += "As a small company, they likely need cost-effective solutions, have limited IT resources, and value simple, easy-to-implement tools. "
-                    elif emp_count < 500:
-                        training_example += "As a medium-sized company, they likely have dedicated departments, need scalable solutions, and are growing their operations. "
-                    elif emp_count < 5000:
-                        training_example += "As a large company, they likely have complex needs, established processes, and require enterprise-grade solutions. "
-                    else:
-                        training_example += "As an enterprise corporation, they likely have sophisticated requirements, compliance needs, and substantial budgets for technology. "
+                employee_count = row.get('employee_count')
+                if employee_count and pd.notna(employee_count):
+                    try:
+                        if isinstance(employee_count, str):
+                            emp_count = int(employee_count)
+                        else:
+                            emp_count = int(employee_count)
+                        
+                        if emp_count < 50:
+                            training_example += "As a small company, they likely need cost-effective solutions, have limited IT resources, and value simple, easy-to-implement tools. "
+                        elif emp_count < 500:
+                            training_example += "As a medium-sized company, they likely have dedicated departments, need scalable solutions, and are growing their operations. "
+                        elif emp_count < 5000:
+                            training_example += "As a large company, they likely have complex needs, established processes, and require enterprise-grade solutions. "
+                        else:
+                            training_example += "As an enterprise corporation, they likely have sophisticated requirements, compliance needs, and substantial budgets for technology. "
+                    except (ValueError, TypeError):
+                        pass
                 
                 # Add industry-specific insights
                 industry = str(row.get('industry', '')).lower()
@@ -214,7 +234,7 @@ Business Analysis: This company operates in the {row.get('industry', 'unknown')}
                 mlm=False  # Causal LM, not masked LM
             )
             
-            # Training arguments
+            # Fixed Training arguments - removed deprecated parameters
             training_args = TrainingArguments(
                 output_dir="./company_training_results",
                 num_train_epochs=2,  # Fewer epochs for large dataset
@@ -223,7 +243,7 @@ Business Analysis: This company operates in the {row.get('industry', 'unknown')}
                 learning_rate=1e-4,
                 logging_steps=50,
                 save_steps=500,
-                evaluation_strategy="no",
+                eval_strategy="no",  # Fixed: was evaluation_strategy
                 save_total_limit=2,
                 remove_unused_columns=False,
                 report_to="none",
@@ -259,6 +279,7 @@ Business Analysis: This company operates in the {row.get('industry', 'unknown')}
             
         except Exception as e:
             st.error(f"❌ Training failed: {str(e)}")
+            st.error(f"Error details: {type(e).__name__}")
             return False
     
     def create_scoring_prompt(self, buyer_data: Dict, product_description: str) -> str:
@@ -406,6 +427,104 @@ Score:"""
         results_df = results_df.sort_values('score', ascending=False).reset_index(drop=True)
         
         return results_df
+    
+    def train_model(self, historical_data: pd.DataFrame) -> bool:
+        """Train model on historical scoring data for improved accuracy"""
+        if not self.is_ready():
+            st.error("❌ Base model not loaded. Cannot train.")
+            return False
+        
+        try:
+            st.info("🏗️ Building historical scoring dataset...")
+            
+            # Create training examples from historical data
+            training_texts = []
+            
+            for _, row in historical_data.iterrows():
+                # Create company profile
+                company_profile = self.create_company_knowledge_text(row)
+                
+                # Create training example
+                training_example = f"""Product: {row.get('product_description', 'Unknown product')}
+Company: {company_profile}
+Score: {row.get('score', 5)}
+Reason: {row.get('reason', 'No reason provided')}"""
+                
+                training_texts.append(training_example)
+            
+            st.info(f"📚 Created {len(training_texts)} historical training examples")
+            
+            # Create dataset and train (similar to company data training)
+            def tokenize_function(examples):
+                return self.tokenizer(
+                    examples['text'],
+                    truncation=True,
+                    padding=True,
+                    max_length=512
+                )
+            
+            dataset = Dataset.from_dict({'text': training_texts})
+            tokenized_dataset = dataset.map(tokenize_function, batched=True)
+            
+            # Configure LoRA
+            peft_config = LoraConfig(
+                task_type=TaskType.CAUSAL_LM,
+                inference_mode=False,
+                r=8,  # Smaller for historical data
+                lora_alpha=16,
+                lora_dropout=0.1,
+                target_modules=["q_proj", "v_proj", "k_proj", "o_proj"] if "llama" in self.model_name.lower() else ["c_attn"]
+            )
+            
+            # Apply LoRA to model
+            model = get_peft_model(self.model, peft_config)
+            
+            # Data collator
+            data_collator = DataCollatorForLanguageModeling(
+                tokenizer=self.tokenizer,
+                mlm=False
+            )
+            
+            # Training arguments
+            training_args = TrainingArguments(
+                output_dir="./historical_training_results",
+                num_train_epochs=3,
+                per_device_train_batch_size=2,
+                gradient_accumulation_steps=4,
+                learning_rate=5e-5,
+                logging_steps=10,
+                save_steps=100,
+                eval_strategy="no",
+                save_total_limit=1,
+                remove_unused_columns=False,
+                report_to="none",
+                gradient_checkpointing=True,
+                fp16=torch.cuda.is_available(),
+                warmup_steps=50
+            )
+            
+            # Create trainer
+            trainer = Trainer(
+                model=model,
+                args=training_args,
+                train_dataset=tokenized_dataset,
+                tokenizer=self.tokenizer,
+                data_collator=data_collator
+            )
+            
+            st.info("🚀 Training on historical scoring data...")
+            with st.spinner("Improving scoring accuracy..."):
+                trainer.train()
+            
+            # Update the current model
+            self.model = model
+            
+            st.success("✅ Historical scoring training completed!")
+            return True
+            
+        except Exception as e:
+            st.error(f"❌ Historical training failed: {str(e)}")
+            return False
     
     def get_model_info(self) -> Dict:
         """Get information about the current model"""

@@ -35,7 +35,7 @@ class SnowflakeManager:
                 password=os.getenv('SNOWFLAKE_PASSWORD'),
                 warehouse=os.getenv('SNOWFLAKE_WAREHOUSE', 'COMPUTE_WH'),
                 database=os.getenv('SNOWFLAKE_DATABASE', 'BUYER_SCORING'),
-                schema=os.getenv('SNOWFLAKE_SCHEMA', 'DATA')
+                schema=os.getenv('SNOWFLAKE_SCHEMA', 'DATA'),
             )
             
             # Test the connection
@@ -115,34 +115,55 @@ class SnowflakeManager:
     def _create_column_mapping(self, columns: List[Dict]) -> Dict[str, str]:
         """Create intelligent mapping from standard fields to actual column names"""
         column_names = [col['name'].lower() for col in columns]
+        column_name_dict = {col['name'].lower(): col['name'] for col in columns}
         mapping = {}
         
-        # Define mapping patterns for common fields
+        # Define mapping patterns for common fields - Updated with your actual columns
         field_patterns = {
             'company_name': ['company_name', 'name', 'company', 'organization', 'org_name', 'business_name'],
             'industry': ['industry', 'sector', 'vertical', 'business_type', 'category'],
-            'employee_count': ['employee_count', 'employees', 'total_employee_estimate', 'staff_count', 'headcount', 'size'],
-            'location': ['location', 'city', 'address', 'headquarters', 'hq_location'],
+            'employee_count': ['current_employee_estimate', 'total_employee_estimate', 'employee_count', 'employees', 'staff_count', 'headcount', 'size'],
+            'location': ['locality', 'location', 'city', 'address', 'headquarters', 'hq_location'],
             'country': ['country', 'nation', 'region'],
-            'website': ['website', 'url', 'domain', 'web_address', 'site'],
+            'website': ['domain', 'website', 'url', 'web_address', 'site'],
             'revenue': ['revenue', 'sales', 'turnover', 'annual_revenue'],
-            'founded_year': ['founded_year', 'established', 'founded', 'year_founded', 'incorporation_year'],
+            'founded_year': ['year_founded', 'founded_year', 'established', 'founded', 'incorporation_year'],
             'description': ['description', 'about', 'overview', 'summary', 'profile'],
             'linkedin_url': ['linkedin_url', 'linkedin', 'linkedin_profile'],
             'phone': ['phone', 'telephone', 'phone_number', 'contact_phone', 'phone_normalized'],
             'email': ['email', 'contact_email', 'email_address', 'email_normalized'],
-            'company_size': ['company_size', 'size_category', 'business_size']
+            'company_size': ['size_range', 'company_size', 'size_category', 'business_size'],
+            'id': ['id', 'company_id', 'record_id'],
+            'batch_id': ['batch_id', 'batch', 'upload_batch'],
+            'uploaded_at': ['uploaded_at', 'created_at', 'date_added', 'timestamp']
         }
         
-        # Find best matches
+        # Find best matches with improved logic
         for standard_field, patterns in field_patterns.items():
             best_match = None
+            best_score = 0
+            
             for pattern in patterns:
                 for col_name in column_names:
-                    if pattern.lower() in col_name or col_name in pattern.lower():
-                        best_match = col_name.upper()
+                    # Exact match gets highest score
+                    if pattern.lower() == col_name:
+                        best_match = column_name_dict[col_name]
+                        best_score = 100
                         break
-                if best_match:
+                    # Partial match gets lower score
+                    elif pattern.lower() in col_name:
+                        score = len(pattern) / len(col_name) * 50
+                        if score > best_score:
+                            best_match = column_name_dict[col_name]
+                            best_score = score
+                    # Reverse partial match
+                    elif col_name in pattern.lower():
+                        score = len(col_name) / len(pattern) * 30
+                        if score > best_score:
+                            best_match = column_name_dict[col_name]
+                            best_score = score
+                
+                if best_score == 100:  # Found exact match
                     break
             
             if best_match:
@@ -159,25 +180,40 @@ class SnowflakeManager:
         return self.table_schemas.get(table_name, [])
     
     def get_table_preview(self, table_name: str, limit: int = 10) -> pd.DataFrame:
-        """Get a preview of data from any table"""
+        """Get a preview of data from any table with type-safe casting"""
         if not self.is_connected():
             return pd.DataFrame()
-        
+
         try:
             cursor = self.connection.cursor()
-            cursor.execute(f"SELECT * FROM {table_name} LIMIT {limit}")
-            
-            columns = [desc[0].lower() for desc in cursor.description]
-            data = cursor.fetchall()
+
+            # Build query with safe casting
+            schema = self.table_schemas.get(table_name, [])
+            select_clauses = []
+            for col in schema:
+                col_name = col['name']
+                col_type = col['type'].upper()
+                if col_type in ['NUMBER', 'BIGINT', 'DECIMAL', 'INT', 'INTEGER']:
+                    select_clauses.append(f"TO_VARCHAR({col_name}) AS {col_name}")
+                else:
+                    select_clauses.append(f"{col_name}")
+
+            query = f"""
+                SELECT {', '.join(select_clauses)} FROM {table_name}
+                LIMIT {limit}
+            """
+            cursor.execute(query)
+
+            columns = [desc[0] for desc in cursor.description]
+            rows = cursor.fetchall()
             cursor.close()
-            
-            if data:
-                return pd.DataFrame(data, columns=columns)
-            return pd.DataFrame()
-            
+
+            return pd.DataFrame(rows, columns=columns)
+
         except Exception as e:
             st.error(f"❌ Failed to preview table {table_name}: {str(e)}")
             return pd.DataFrame()
+
     
     def get_companies_for_scoring(self, table_name: str, limit: int = 100, filters: Dict = None) -> pd.DataFrame:
         """Get companies from any selected table for scoring"""
@@ -188,15 +224,25 @@ class SnowflakeManager:
             cursor = self.connection.cursor()
             mapping = self.column_mappings.get(table_name, {})
             
-            # Build SELECT clause using available columns
+            # Build SELECT clause using available columns with safer data handling
             select_columns = []
             for standard_field, actual_column in mapping.items():
                 if actual_column:
-                    select_columns.append(f"{actual_column} as {standard_field}")
+                    # Cast large numbers to string to avoid overflow
+                    if 'employee' in standard_field.lower() or 'count' in standard_field.lower():
+                        select_columns.append(f"CAST({actual_column} AS VARCHAR) as {standard_field}")
+                    else:
+                        select_columns.append(f"{actual_column} as {standard_field}")
             
-            # If no mapping found, get all columns
+            # If no mapping found, get all columns but be safe with large numbers
             if not select_columns:
-                select_columns = ["*"]
+                # Get column info to identify numeric columns
+                schema = self.table_schemas.get(table_name, [])
+                for col in schema:
+                    if col['type'] in ['NUMBER', 'BIGINT'] and ('employee' in col['name'].lower() or 'estimate' in col['name'].lower()):
+                        select_columns.append(f"CAST({col['name']} AS VARCHAR) as {col['name'].lower()}")
+                    else:
+                        select_columns.append(f"{col['name']} as {col['name'].lower()}")
             
             # Build WHERE clause based on filters
             where_conditions = ["1=1"]  # Always true condition
@@ -208,11 +254,11 @@ class SnowflakeManager:
                     params.append(f"%{filters['industry']}%")
                 
                 if filters.get('min_employees') and mapping.get('employee_count'):
-                    where_conditions.append(f"{mapping['employee_count']} >= %s")
+                    where_conditions.append(f"CAST({mapping['employee_count']} AS NUMBER) >= %s")
                     params.append(filters['min_employees'])
                 
                 if filters.get('max_employees') and mapping.get('employee_count'):
-                    where_conditions.append(f"{mapping['employee_count']} <= %s")
+                    where_conditions.append(f"CAST({mapping['employee_count']} AS NUMBER) <= %s")
                     params.append(filters['max_employees'])
                 
                 if filters.get('location'):
@@ -247,6 +293,10 @@ class SnowflakeManager:
             
             if data:
                 df = pd.DataFrame(data, columns=columns)
+                
+                # Convert string employee counts back to numeric where possible
+                if 'employee_count' in df.columns:
+                    df['employee_count'] = pd.to_numeric(df['employee_count'], errors='coerce')
                 
                 # Post-process location if we have both city and country
                 if 'location' in df.columns and 'country' in df.columns:
@@ -302,10 +352,10 @@ class SnowflakeManager:
                 cursor.execute(f"""
                     SELECT 
                         CASE 
-                            WHEN {mapping['employee_count']} < 10 THEN 'Startup (1-9)'
-                            WHEN {mapping['employee_count']} < 50 THEN 'Small (10-49)'
-                            WHEN {mapping['employee_count']} < 250 THEN 'Medium (50-249)'
-                            WHEN {mapping['employee_count']} < 1000 THEN 'Large (250-999)'
+                            WHEN CAST({mapping['employee_count']} AS NUMBER) < 10 THEN 'Startup (1-9)'
+                            WHEN CAST({mapping['employee_count']} AS NUMBER) < 50 THEN 'Small (10-49)'
+                            WHEN CAST({mapping['employee_count']} AS NUMBER) < 250 THEN 'Medium (50-249)'
+                            WHEN CAST({mapping['employee_count']} AS NUMBER) < 1000 THEN 'Large (250-999)'
                             ELSE 'Enterprise (1000+)'
                         END as size_category,
                         COUNT(*) as count
@@ -350,7 +400,7 @@ class SnowflakeManager:
                     contact_email VARCHAR(255),
                     linkedin_url VARCHAR(500),
                     website VARCHAR(255),
-                    employee_count NUMBER,
+                    employee_count VARCHAR(50), -- Changed to VARCHAR to handle large numbers
                     funding_stage VARCHAR(50),
                     current_tools VARCHAR(255),
                     score NUMBER(3,1),
@@ -406,6 +456,11 @@ class SnowflakeManager:
             
             # Insert each row
             for _, row in scored_df.iterrows():
+                # Convert employee_count to string if it's numeric
+                emp_count = row.get('employee_count', '')
+                if pd.notna(emp_count) and isinstance(emp_count, (int, float)):
+                    emp_count = str(int(emp_count))
+                
                 cursor.execute("""
                     INSERT INTO buyers (
                         source_table, company_name, industry, company_size, revenue, location,
@@ -417,21 +472,21 @@ class SnowflakeManager:
                     )
                 """, (
                     source_table,
-                    row.get('company_name', ''),
-                    row.get('industry', ''),
-                    row.get('company_size', ''),
-                    row.get('revenue', ''),
-                    row.get('location', ''),
-                    row.get('contact_name', ''),
-                    row.get('contact_title', ''),
-                    row.get('contact_email', ''),
-                    row.get('linkedin_url', ''),
-                    row.get('website', ''),
-                    row.get('employee_count', None),
-                    row.get('funding_stage', ''),
-                    row.get('current_tools', ''),
-                    row.get('score', 5),
-                    row.get('reason', ''),
+                    str(row.get('company_name', '')),
+                    str(row.get('industry', '')),
+                    str(row.get('company_size', '')),
+                    str(row.get('revenue', '')),
+                    str(row.get('location', '')),
+                    str(row.get('contact_name', '')),
+                    str(row.get('contact_title', '')),
+                    str(row.get('contact_email', '')),
+                    str(row.get('linkedin_url', '')),
+                    str(row.get('website', '')),
+                    str(emp_count),
+                    str(row.get('funding_stage', '')),
+                    str(row.get('current_tools', '')),
+                    float(row.get('score', 5)),
+                    str(row.get('reason', '')),
                     product_description,
                     session_id
                 ))
@@ -503,47 +558,55 @@ class SnowflakeManager:
         """Get all company data from selected table for AI training"""
         if not self.is_connected():
             return pd.DataFrame()
-        
+
         try:
             cursor = self.connection.cursor()
             mapping = self.column_mappings.get(table_name, {})
-            
-            # Build SELECT clause using available mapped columns
+            schema = self.table_schemas.get(table_name, [])
+
+            # Always cast all fields to safe types
             select_columns = []
-            for standard_field, actual_column in mapping.items():
-                if actual_column:
-                    select_columns.append(f"{actual_column} as {standard_field}")
-            
-            # If no mapping found, get all columns
+            schema = self.table_schemas.get(table_name, [])
+            for field, actual_column in mapping.items():
+                schema_entry = next((col for col in schema if col['name'] == actual_column), None)
+                if not schema_entry:
+                    continue
+                col_type = schema_entry['type'].upper()
+                if col_type in ['NUMBER', 'BIGINT', 'DECIMAL', 'INT', 'INTEGER']:
+                    select_columns.append(f"TO_VARCHAR({actual_column}) AS {field}")
+                else:
+                    select_columns.append(f"{actual_column} AS {field}")
             if not select_columns:
-                cursor.execute(f"SELECT * FROM {table_name} WHERE ROWNUM <= 50000")
-            else:
-                query = f"""
-                    SELECT {', '.join(select_columns)}
-                    FROM {table_name} 
-                    WHERE {mapping.get('company_name', 'COMPANY_NAME')} IS NOT NULL 
-                    AND {mapping.get('company_name', 'COMPANY_NAME')} != ''
-                    ORDER BY {mapping.get('employee_count', 'ROWNUM')} DESC NULLS LAST
-                    LIMIT 50000
-                """
-                cursor.execute(query)
-            
-            # Fetch data and column names
+                st.warning("⚠️ No usable columns found in mapping")
+                return pd.DataFrame()
+
+            query = f"""
+                SELECT {', '.join(select_columns)}
+                FROM {table_name}
+                WHERE {mapping.get('company_name', 'COMPANY_NAME')} IS NOT NULL 
+                AND {mapping.get('company_name', 'COMPANY_NAME')} != ''
+                ORDER BY RANDOM()
+                LIMIT 50000
+            """
+
+            cursor.execute(query)
             columns = [desc[0].lower() for desc in cursor.description]
             data = cursor.fetchall()
             cursor.close()
-            
+
             if data:
                 df = pd.DataFrame(data, columns=columns)
-                st.info(f"📚 Retrieved {len(df):,} companies from '{table_name}' for AI training")
+                if 'employee_count' in df.columns:
+                    df['employee_count'] = pd.to_numeric(df['employee_count'], errors='coerce')
                 return df
             else:
                 st.info(f"📭 No company data found in table '{table_name}' for training")
                 return pd.DataFrame()
-                
+
         except Exception as e:
             st.error(f"❌ Failed to retrieve training data from {table_name}: {str(e)}")
             return pd.DataFrame()
+
     
     def get_column_mapping_info(self, table_name: str) -> Dict:
         """Get information about how columns are mapped for a table"""
