@@ -252,13 +252,13 @@ def format_score_for_display(score: int) -> str:
         str: Formatted score with emoji
     """
     if score >= 8:
-        return f"🔥 {score}/10"
+        return f"{score}/10"
     elif score >= 6:
-        return f"⚡ {score}/10"
+        return f"{score}/10"
     elif score >= 4:
-        return f"⚠️ {score}/10"
+        return f"{score}/10"
     else:
-        return f"❄️ {score}/10"
+        return f"{score}/10"
 
 def validate_product_description(description: str) -> Tuple[bool, str]:
     """

@@ -50,11 +50,11 @@ class BuyerScoringModel:
         try:
             # Check if we have a company-trained model
             if os.path.exists(self.trained_model_path):
-                st.info("🏢 Loading company-trained model...")
+                st.info("Loading company-trained model...")
                 self.tokenizer = AutoTokenizer.from_pretrained(self.trained_model_path)
                 self.model = AutoModelForCausalLM.from_pretrained(self.trained_model_path)
             else:
-                st.info("📚 Loading base model from Hugging Face...")
+                st.info("Loading base model from Hugging Face...")
                 self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
                 self.model = AutoModelForCausalLM.from_pretrained(
                     self.model_name,
@@ -66,7 +66,7 @@ class BuyerScoringModel:
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
             
-            st.success("✅ Model loaded successfully")
+            st.success("Model loaded successfully")
             
         except Exception as e:
             st.error(f"❌ Failed to load model: {str(e)}")
@@ -134,14 +134,14 @@ class BuyerScoringModel:
     
     def intelligent_sampling(self, company_df: pd.DataFrame) -> pd.DataFrame:
         """Intelligently sample companies for diverse, representative training data"""
-        st.info(f"🎯 Intelligent sampling from {len(company_df):,} companies...")
+        st.info(f"Intelligent sampling from {len(company_df):,} companies...")
         
         sampled_companies = []
         
         # STRATEGY 1: Industry-based sampling
         if 'industry' in company_df.columns:
             industry_counts = company_df['industry'].value_counts()
-            st.info(f"📊 Found {len(industry_counts)} unique industries")
+            st.info(f"Found {len(industry_counts)} unique industries")
             
             for industry in industry_counts.head(25).index:  # Top 25 industries
                 industry_df = company_df[company_df['industry'] == industry]
@@ -159,7 +159,7 @@ class BuyerScoringModel:
                 
                 sampled_companies.append(sample)
                 
-            st.info(f"✅ Sampled from {len(industry_counts.head(25))} top industries")
+            st.info(f"Sampled from {len(industry_counts.head(25))} top industries")
         
         # STRATEGY 2: Company size sampling
         if 'employee_count' in company_df.columns:
@@ -213,7 +213,7 @@ class BuyerScoringModel:
         if len(combined_df) > self.max_training_samples:
             combined_df = combined_df.sample(n=self.max_training_samples, random_state=42)
         
-        st.success(f"🎯 Intelligently selected {len(combined_df):,} diverse companies for training")
+        st.success(f"Intelligently selected {len(combined_df):,} diverse companies for training")
         return combined_df.reset_index(drop=True)
     
     def create_efficient_training_examples(self, sample_df: pd.DataFrame) -> List[str]:
@@ -269,16 +269,16 @@ Business Context: This company in the {row.get('industry', 'unknown')} sector ""
             return False
         
         try:
-            st.info("🚀 Starting OPTIMIZED company knowledge training...")
+            st.info("Starting OPTIMIZED company knowledge training...")
             
             # STEP 1: Intelligent sampling for diverse, representative data
             sample_df = self.intelligent_sampling(company_df)
             
             # STEP 2: Create efficient training examples
-            st.info("📝 Creating high-quality training examples...")
+            st.info("Creating high-quality training examples...")
             training_texts = self.create_efficient_training_examples(sample_df)
             
-            st.info(f"📚 Created {len(training_texts):,} optimized training examples")
+            st.info(f"Created {len(training_texts):,} optimized training examples")
             
             # STEP 3: Efficient tokenization
             def tokenize_function_optimized(examples):
@@ -320,7 +320,7 @@ Business Context: This company in the {row.get('industry', 'unknown')} sector ""
             # Verify trainable parameters
             trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
             total_params = sum(p.numel() for p in model.parameters())
-            st.info(f"🎯 Training {trainable_params:,} parameters ({100 * trainable_params / total_params:.1f}% of model)")
+            st.info(f"Training {trainable_params:,} parameters ({100 * trainable_params / total_params:.1f}% of model)")
 
             # STEP 5: Optimized training configuration
             # Detect hardware capabilities
@@ -368,7 +368,7 @@ Business Context: This company in the {row.get('industry', 'unknown')} sector ""
                 max_grad_norm=1.0,
             )
             
-            st.info(f"🚀 Training configuration:")
+            st.info(f"   Training configuration:")
             st.info(f"   • Batch size: {batch_size} × {gradient_steps} = {effective_batch_size}")
             st.info(f"   • Max steps: {max_steps:,}")
             st.info(f"   • Hardware: {'GPU' if has_gpu else 'CPU'}")
@@ -389,13 +389,13 @@ Business Context: This company in the {row.get('industry', 'unknown')} sector ""
                 data_collator=data_collator
             )
             
-            st.info("🏃‍♂️ Starting optimized training... (Estimated time: 30-90 minutes)")
+            st.info("Starting optimized training... (Estimated time: 30-90 minutes)")
             
             # Training with progress updates
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            with st.spinner("🤖 AI learning your company database..."):
+            with st.spinner("AI learning your company database..."):
                 trainer.train()
             
             progress_bar.empty()
@@ -409,9 +409,9 @@ Business Context: This company in the {row.get('industry', 'unknown')} sector ""
             # Update current model
             self.model = model
             
-            st.success("✅ OPTIMIZED company knowledge training completed!")
-            st.success(f"🎯 Model trained on {len(sample_df):,} diverse companies")
-            st.info("💡 Your AI now understands company characteristics and business needs!")
+            st.success("Optimized company knowledge training completed!")
+            st.success(f"Model trained on {len(sample_df):,} diverse companies")
+            st.info("Your AI now understands company characteristics and business needs!")
             
             return True
             
@@ -533,7 +533,7 @@ Score:"""
         for index, row in buyer_df.iterrows():
             progress = (index + 1) / total_buyers
             progress_bar.progress(progress)
-            status_text.text(f"🤖 AI analyzing buyer {index + 1} of {total_buyers}: {row.get('company_name', 'Unknown')}")
+            status_text.text(f"AI analyzing buyer {index + 1} of {total_buyers}: {row.get('company_name', 'Unknown')}")
             
             buyer_dict = row.to_dict()
             score, reason = self.score_single_buyer(buyer_dict, product_description)
@@ -560,7 +560,7 @@ Score:"""
             return False
         
         try:
-            st.info("🏗️ Building historical scoring dataset...")
+            st.info("Building historical scoring dataset...")
             
             training_texts = []
 
@@ -574,7 +574,7 @@ Reason: {row.get('reason', 'No reason provided')}"""
                 
                 training_texts.append(training_example)
 
-            st.info(f"📚 Created {len(training_texts)} historical training examples")
+            st.info(f"Created {len(training_texts)} historical training examples")
 
             def tokenize_function(examples):
                 texts = examples['text'] if isinstance(examples['text'], list) else [examples['text']]
@@ -646,7 +646,7 @@ Reason: {row.get('reason', 'No reason provided')}"""
                 data_collator=data_collator
             )
             
-            st.info("🚀 Training on historical scoring data...")
+            st.info("Training on historical scoring data...")
             with st.spinner("Improving scoring accuracy..."):
                 trainer.train()
             
@@ -656,7 +656,7 @@ Reason: {row.get('reason', 'No reason provided')}"""
             
             self.model = model
             
-            st.success("✅ Historical scoring training completed!")
+            st.success("Historical scoring training completed!")
             return True
             
         except Exception as e:
@@ -772,7 +772,7 @@ Reason: {row.get('reason', 'No reason provided')}"""
         if founded_year and pd.notna(founded_year):
             try:
                 year = int(float(founded_year))
-                company_age = 2024 - year
+                company_age = 2025 - year
                 
                 if company_age < 3:  # Very young startup
                     if 'startup' in product_lower or is_simple_product:

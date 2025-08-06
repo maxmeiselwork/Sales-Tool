@@ -44,11 +44,10 @@ class SnowflakeManager:
             version = cursor.fetchone()
             cursor.close()
             
-            st.success(f"✅ Connected to Snowflake (Version: {version[0]})")
+            st.success(f"Connected to Snowflake (Version: {version[0]})")
             
         except Exception as e:
             st.error(f"❌ Snowflake connection failed: {str(e)}")
-            st.info("💡 Make sure your .env file has correct Snowflake credentials")
             self.connection = None
     
     def is_connected(self) -> bool:
@@ -107,7 +106,7 @@ class SnowflakeManager:
                 self.column_mappings[table_name] = self._create_column_mapping(columns)
             
             cursor.close()
-            st.info(f"📊 Discovered {len(self.available_tables)} tables")
+            st.info(f"Discovered {len(self.available_tables)} tables")
             
         except Exception as e:
             st.error(f"❌ Failed to discover tables: {str(e)}")
@@ -318,10 +317,10 @@ class SnowflakeManager:
                         else row['country'] if pd.notna(row['country'])
                         else 'Unknown', axis=1)
                 
-                st.info(f"📊 Retrieved {len(df)} companies from table '{table_name}'")
+                st.info(f"Retrieved {len(df)} companies from table '{table_name}'")
                 return df
             else:
-                st.info("📭 No companies found matching your criteria")
+                st.info("No companies found matching your criteria")
                 return pd.DataFrame()
                 
         except Exception as e:
@@ -444,7 +443,7 @@ class SnowflakeManager:
             """)
             
             cursor.close()
-            st.success("✅ Application tables ready")
+            st.success("Application tables ready")
             return True
             
         except Exception as e:
@@ -506,7 +505,7 @@ class SnowflakeManager:
             self.connection.commit()
             cursor.close()
             
-            st.success(f"✅ Saved {len(scored_df)} records to Snowflake (Session: {session_id})")
+            st.success(f"Saved {len(scored_df)} records to Snowflake (Session: {session_id})")
             return True
             
         except Exception as e:
@@ -540,10 +539,10 @@ class SnowflakeManager:
             
             if data:
                 df = pd.DataFrame(data, columns=columns)
-                st.info(f"📚 Retrieved {len(df)} historical records for training")
+                st.info(f"Retrieved {len(df)} historical records for training")
                 return df
             else:
-                st.info("📭 No historical data found")
+                st.info("No historical data found")
                 return pd.DataFrame()
                 
         except Exception as e:

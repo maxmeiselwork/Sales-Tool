@@ -24,7 +24,7 @@ def main():
     """Main application function"""
     
     # Header
-    st.title("🎯 AI-Powered Buyer Scoring Tool")
+    st.title("AI-Powered Buyer Scoring Tool")
     st.markdown("""
     **Select any table from your Snowflake database and get AI-powered lead scoring!**
     
@@ -33,42 +33,42 @@ def main():
     
     # Initialize components
     if 'model' not in st.session_state:
-        with st.spinner("🤖 Loading AI model..."):
+        with st.spinner("Loading AI model..."):
             try:
                 st.session_state.model = BuyerScoringModel()
             except Exception as e:
-                st.error(f"❌ Failed to load AI model: {str(e)}")
-                st.info("💡 Check your .env file and ensure Hugging Face token is set")
+                st.error(f"Failed to load AI model: {str(e)}")
+                st.info("Check your .env file and ensure Hugging Face token is set")
                 return
     
     if 'db' not in st.session_state:
         try:
             st.session_state.db = SnowflakeManager()
         except Exception as e:
-            st.error(f"❌ Failed to connect to Snowflake: {str(e)}")
-            st.info("💡 Check your .env file for Snowflake credentials")
+            st.error(f"Failed to connect to Snowflake: {str(e)}")
+            st.info("Check your .env file for Snowflake credentials")
             return
     
     # Sidebar for model management and settings
     with st.sidebar:
-        st.header("🧠 Model Management")
+        st.header("Model Management")
         
         # Model status
         if st.session_state.model and st.session_state.model.is_ready():
-            st.success("✅ AI Model Ready")
+            st.success("AI Model Ready")
             if st.session_state.model.is_trained():
-                st.info("🎓 Using Fine-tuned Model")
+                st.info("Using Fine-tuned Model")
             else:
-                st.info("📚 Using Base Model")
+                st.info("Using Base Model")
         else:
-            st.error("❌ Model Not Loaded")
+            st.error("Model Not Loaded")
         
         # Database status
         if st.session_state.db and st.session_state.db.is_connected():
-            st.success("✅ Snowflake Connected")
+            st.success("Snowflake Connected")
             
             # Table selection
-            st.subheader("📊 Select Data Table")
+            st.subheader("Select Data Table")
             available_tables = st.session_state.db.get_available_tables()
             
             if available_tables:
@@ -100,13 +100,13 @@ def main():
                         st.metric("Mapped Fields", f"{mapping_info['mapped_fields']}/{mapping_info['total_columns']}")
                         
                         # Show table preview
-                        with st.expander("👀 Table Preview"):
+                        with st.expander("Table Preview"):
                             preview_df = st.session_state.db.get_table_preview(selected_table, 5)
                             if not preview_df.empty:
                                 st.dataframe(preview_df, use_container_width=True)
                         
                         # Show column mapping
-                        with st.expander("🔗 Column Mapping"):
+                        with st.expander("Column Mapping"):
                             mapping = mapping_info['mapping']
                             if mapping:
                                 for standard_field, actual_column in mapping.items():
@@ -115,52 +115,52 @@ def main():
                             else:
                                 st.write("No automatic mapping available - using raw columns")
             else:
-                st.warning("⚠️ No tables found in the current schema")
+                st.warning("No tables found in the current schema")
                 return
         else:
-            st.error("❌ Snowflake Not Connected")
+            st.error("Snowflake Not Connected")
             return
         
         # Training section (only show if table is selected)
         if hasattr(st.session_state, 'selected_table') and st.session_state.selected_table:
-            st.subheader("🏢 Company Knowledge Training")
-            if st.button("🧠 Train AI on Selected Table"):
+            st.subheader("Company Knowledge Training")
+            if st.button("Train AI on Selected Table"):
                 # Get all company data for training from selected table
-                with st.spinner(f"📊 Loading company data from {st.session_state.selected_table}..."):
+                with st.spinner(f"Loading company data from {st.session_state.selected_table}..."):
                     company_data = st.session_state.db.get_all_companies_for_training(st.session_state.selected_table)
                 
                 if len(company_data) > 1000:
-                    with st.spinner("🚀 Training AI model on company knowledge..."):
+                    with st.spinner("Training AI model on company knowledge..."):
                         success = st.session_state.model.train_on_company_data(company_data)
                     if success:
-                        st.success("✅ AI now knows your company database!")
+                        st.success("AI now knows your company database!")
                         st.balloons()
-                        st.experimental_rerun()
+                        st.rerun()
                 else:
-                    st.warning(f"⚠️ Need at least 1,000 companies to train effectively. Found {len(company_data)} companies in selected table.")
+                    st.warning(f"Need at least 1,000 companies to train effectively. Found {len(company_data)} companies in selected table.")
             
             # Historical scoring training
-            st.subheader("🎯 Scoring Improvement")
-            if st.button("📊 Train on Scoring History"):
+            st.subheader("Scoring Improvement")
+            if st.button("Train on Scoring History"):
                 historical_data = st.session_state.db.get_historical_data()
                 
                 if len(historical_data) > 5:
-                    with st.spinner("🚀 Training model on scoring patterns..."):
+                    with st.spinner("Training model on scoring patterns..."):
                         success = st.session_state.model.train_model(historical_data)
                     if success:
-                        st.success("✅ Improved scoring accuracy!")
-                        st.experimental_rerun()
+                        st.success("Improved scoring accuracy!")
+                        st.rerun()
                 else:
-                    st.warning("⚠️ Need at least 5 historical scores to improve. Score some buyers first!")
+                    st.warning("Need at least 5 historical scores to improve. Score some buyers first!")
         
         # Data statistics
-        st.subheader("📈 Scoring Statistics")
+        st.subheader("Scoring Statistics")
         total_records = st.session_state.db.get_record_count()
         st.metric("Total Scored Buyers", total_records)
     
     # Main content area
     if not hasattr(st.session_state, 'selected_table') or not st.session_state.selected_table:
-        st.info("👈 Please select a table from the sidebar to begin")
+        st.info("Please select a table from the sidebar to begin")
         return
     
     selected_table = st.session_state.selected_table
@@ -240,7 +240,7 @@ def main():
         )
         
         # Load companies button
-        if st.button("📊 Load Companies from Table", type="primary"):
+        if st.button("Load Companies from Table", type="primary"):
             with st.spinner(f"🔍 Searching companies in {selected_table}..."):
                 
                 # Build filters
@@ -264,9 +264,9 @@ def main():
                 if len(companies_df) > 0:
                     st.session_state.selected_companies = companies_df
                     st.session_state.source_table = selected_table
-                    st.success(f"✅ Loaded {len(companies_df)} companies from {selected_table}!")
+                    st.success(f"Loaded {len(companies_df)} companies from {selected_table}!")
                 else:
-                    st.warning("⚠️ No companies found matching your criteria")
+                    st.warning("No companies found matching your criteria")
     
     with col2:
         # Instructions and tips
@@ -292,7 +292,7 @@ def main():
         if st.session_state.db and st.session_state.db.is_connected():
             stats = st.session_state.db.get_company_stats(selected_table)
             if stats and stats.get('top_industries'):
-                st.subheader(f"📊 {selected_table} Overview")
+                st.subheader(f"{selected_table} Overview")
                 st.write("**Top Industries:**")
                 for industry in stats['top_industries'][:5]:
                     st.write(f"• {industry['industry']}: {industry['count']:,} companies")
@@ -304,7 +304,7 @@ def main():
         source_table = st.session_state.get('source_table', 'Unknown')
         
         # Data preview
-        with st.expander(f"👀 Preview Selected Companies from {source_table}", expanded=True):
+        with st.expander(f"Preview Selected Companies from {source_table}", expanded=True):
             st.dataframe(companies_df.head(10), use_container_width=True)
             
             # Data summary
@@ -323,7 +323,7 @@ def main():
         # Scoring section
         st.header("3️⃣ AI Scoring")
         
-        if st.button("🚀 Score Selected Companies", type="primary", disabled=not product_description):
+        if st.button("Score Selected Companies", type="primary", disabled=not product_description):
             if not product_description:
                 st.error("❌ Please enter a product description first")
                 return
@@ -333,7 +333,7 @@ def main():
                 return
             
             # Score the companies
-            with st.spinner("🤖 AI is analyzing your companies..."):
+            with st.spinner("AI is analyzing your companies..."):
                 scored_results = st.session_state.model.score_buyers(
                     companies_df, 
                     product_description
@@ -353,30 +353,30 @@ def main():
 def display_scoring_results(scored_results):
     """Display the scoring results with analytics"""
     
-    st.success(f"✅ Successfully scored {len(scored_results)} companies!")
+    st.success(f"Successfully scored {len(scored_results)} companies!")
     
     # Summary metrics
-    st.subheader("📊 Scoring Summary")
+    st.subheader("Scoring Summary")
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         high_score = len(scored_results[scored_results['score'] >= 8])
-        st.metric("🔥 Hot Leads (8-10)", high_score, delta=f"{high_score/len(scored_results)*100:.1f}%")
+        st.metric("Hot Leads (8-10)", high_score, delta=f"{high_score/len(scored_results)*100:.1f}%")
     
     with col2:
         warm_score = len(scored_results[(scored_results['score'] >= 6) & (scored_results['score'] < 8)])
-        st.metric("🌟 Warm Leads (6-7)", warm_score, delta=f"{warm_score/len(scored_results)*100:.1f}%")
+        st.metric("Warm Leads (6-7)", warm_score, delta=f"{warm_score/len(scored_results)*100:.1f}%")
     
     with col3:
         cold_score = len(scored_results[(scored_results['score'] >= 4) & (scored_results['score'] < 6)])
-        st.metric("❄️ Cold Leads (4-5)", cold_score, delta=f"{cold_score/len(scored_results)*100:.1f}%")
+        st.metric("Cold Leads (4-5)", cold_score, delta=f"{cold_score/len(scored_results)*100:.1f}%")
     
     with col4:
         poor_score = len(scored_results[scored_results['score'] < 4])
-        st.metric("❌ Poor Fit (<4)", poor_score, delta=f"{poor_score/len(scored_results)*100:.1f}%")
+        st.metric("Poor Fit (<4)", poor_score, delta=f"{poor_score/len(scored_results)*100:.1f}%")
     
     # Results table
-    st.subheader("🎯 Scored Results")
+    st.subheader("Scored Results")
     
     # Filter options
     col1, col2 = st.columns(2)
@@ -420,7 +420,7 @@ def display_scoring_results(scored_results):
         st.dataframe(styled_results, use_container_width=True)
     
     # Download options
-    st.subheader("📥 Export Results")
+    st.subheader("Export Results")
     col1, col2 = st.columns(2)
     
     with col1:
@@ -443,7 +443,7 @@ def display_scoring_results(scored_results):
                 scored_results.to_excel(writer, sheet_name='Scored Buyers', index=False)
             
             st.download_button(
-                label="📊 Download Excel",
+                label="Download Excel",
                 data=buffer.getvalue(),
                 file_name=f"buyer_scores_{timestamp}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -453,7 +453,7 @@ def display_scoring_results(scored_results):
 
 def show_table_management():
     """Show table management interface"""
-    st.header("📊 Table Management")
+    st.header("Table Management")
     
     if st.session_state.db and st.session_state.db.is_connected():
         available_tables = st.session_state.db.get_available_tables()
@@ -462,7 +462,7 @@ def show_table_management():
             st.subheader("Available Tables")
             
             for table in available_tables:
-                with st.expander(f"📋 {table['name']} ({table['row_count']:,} rows)"):
+                with st.expander(f"{table['name']} ({table['row_count']:,} rows)"):
                     
                     # Show column information
                     st.write("**Columns:**")
@@ -490,7 +490,7 @@ def show_table_management():
 # Add table management to sidebar
 def add_table_management_to_sidebar():
     """Add table management option to sidebar"""
-    if st.sidebar.button("🔧 Manage Tables"):
+    if st.sidebar.button("Manage Tables"):
         st.session_state.show_table_management = True
 
 # Run the app
@@ -503,6 +503,6 @@ if __name__ == "__main__":
         show_table_management()
         if st.button("← Back to Scoring"):
             st.session_state.show_table_management = False
-            st.experimental_rerun()
+            st.rerun()
     else:
         main()
