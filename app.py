@@ -177,8 +177,8 @@ def main():
             help="Be specific about your target market, key features, and ideal customer size"
         )
         
-        # Step 2: Select Companies from Selected Table
-        st.header(f"2️⃣ Select Companies from {selected_table}")
+        # Filter & Score Companies
+        st.subheader(f"Filter & Score Companies from {selected_table}")
         
         # Company selection filters
         with st.expander("🔍 Filter Companies", expanded=True):
@@ -239,9 +239,17 @@ def main():
             help="More companies = more comprehensive results but slower processing"
         )
         
-        # Load companies button
-        if st.button("Load Companies from Table", type="primary"):
-            with st.spinner(f"🔍 Searching companies in {selected_table}..."):
+        # Score companies button - combined action
+        if st.button("🎯 Score Best Companies", type="primary", disabled=not product_description):
+            if not product_description:
+                st.error("❌ Please enter a product description first")
+                return
+            
+            if not st.session_state.model or not st.session_state.model.is_ready():
+                st.error("❌ AI model not ready. Please check your configuration.")
+                return
+            
+            with st.spinner(f"🔍 Finding and scoring top companies from {selected_table}..."):
                 
                 # Build filters
                 filters = {}
@@ -262,9 +270,22 @@ def main():
                 )
                 
                 if len(companies_df) > 0:
-                    st.session_state.selected_companies = companies_df
-                    st.session_state.source_table = selected_table
-                    st.success(f"Loaded {len(companies_df)} companies from {selected_table}!")
+                    # Score the companies
+                    scored_results = st.session_state.model.score_buyers(
+                        companies_df, 
+                        product_description
+                    )
+                    
+                    # Save to database with source table info
+                    if st.session_state.db and st.session_state.db.is_connected():
+                        st.session_state.db.save_scoring_results(
+                            scored_results, 
+                            product_description, 
+                            selected_table
+                        )
+                    
+                    # Display results
+                    display_scoring_results(scored_results)
                 else:
                     st.warning("No companies found matching your criteria")
     
@@ -296,92 +317,39 @@ def main():
                 st.write("**Top Industries:**")
                 for industry in stats['top_industries'][:5]:
                     st.write(f"• {industry['industry']}: {industry['count']:,} companies")
-    
-    # Display selected companies and scoring
-    if 'selected_companies' in st.session_state and len(st.session_state.selected_companies) > 0:
-        
-        companies_df = st.session_state.selected_companies
-        source_table = st.session_state.get('source_table', 'Unknown')
-        
-        # Data preview
-        with st.expander(f"Preview Selected Companies from {source_table}", expanded=True):
-            st.dataframe(companies_df.head(10), use_container_width=True)
-            
-            # Data summary
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total Companies", len(companies_df))
-            with col2:
-                if 'industry' in companies_df.columns:
-                    unique_industries = companies_df['industry'].nunique()
-                    st.metric("Industries", unique_industries)
-            with col3:
-                if 'employee_count' in companies_df.columns:
-                    avg_size = companies_df['employee_count'].mean()
-                    st.metric("Avg Company Size", f"{avg_size:.0f}" if not pd.isna(avg_size) else "N/A")
-        
-        # Scoring section
-        st.header("3️⃣ AI Scoring")
-        
-        if st.button("Score Selected Companies", type="primary", disabled=not product_description):
-            if not product_description:
-                st.error("❌ Please enter a product description first")
-                return
-            
-            if not st.session_state.model or not st.session_state.model.is_ready():
-                st.error("❌ AI model not ready. Please check your configuration.")
-                return
-            
-            # Score the companies
-            with st.spinner("AI is analyzing your companies..."):
-                scored_results = st.session_state.model.score_buyers(
-                    companies_df, 
-                    product_description
-                )
-            
-            # Save to database with source table info
-            if st.session_state.db and st.session_state.db.is_connected():
-                st.session_state.db.save_scoring_results(
-                    scored_results, 
-                    product_description, 
-                    source_table
-                )
-            
-            # Display results
-            display_scoring_results(scored_results)
 
 def display_scoring_results(scored_results):
     """Display the scoring results with analytics"""
     
     st.success(f"Successfully scored {len(scored_results)} companies!")
     
-    # Summary metrics
+    # Summary metrics - update ranges for decimals
     st.subheader("Scoring Summary")
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        high_score = len(scored_results[scored_results['score'] >= 8])
-        st.metric("Hot Leads (8-10)", high_score, delta=f"{high_score/len(scored_results)*100:.1f}%")
+        high_score = len(scored_results[scored_results['score'] >= 8.0])
+        st.metric("Hot Leads (8.0+)", high_score, delta=f"{high_score/len(scored_results)*100:.1f}%")
     
     with col2:
-        warm_score = len(scored_results[(scored_results['score'] >= 6) & (scored_results['score'] < 8)])
-        st.metric("Warm Leads (6-7)", warm_score, delta=f"{warm_score/len(scored_results)*100:.1f}%")
+        warm_score = len(scored_results[(scored_results['score'] >= 6.0) & (scored_results['score'] < 8.0)])
+        st.metric("Warm Leads (6.0-7.9)", warm_score, delta=f"{warm_score/len(scored_results)*100:.1f}%")
     
     with col3:
-        cold_score = len(scored_results[(scored_results['score'] >= 4) & (scored_results['score'] < 6)])
-        st.metric("Cold Leads (4-5)", cold_score, delta=f"{cold_score/len(scored_results)*100:.1f}%")
+        cold_score = len(scored_results[(scored_results['score'] >= 4.0) & (scored_results['score'] < 6.0)])
+        st.metric("Cold Leads (4.0-5.9)", cold_score, delta=f"{cold_score/len(scored_results)*100:.1f}%")
     
     with col4:
-        poor_score = len(scored_results[scored_results['score'] < 4])
-        st.metric("Poor Fit (<4)", poor_score, delta=f"{poor_score/len(scored_results)*100:.1f}%")
+        poor_score = len(scored_results[scored_results['score'] < 4.0])
+        st.metric("Poor Fit (<4.0)", poor_score, delta=f"{poor_score/len(scored_results)*100:.1f}%")
     
-    # Results table
-    st.subheader("Scored Results")
+    # Results display - simplified view
+    st.subheader("Top Scored Companies")
     
     # Filter options
     col1, col2 = st.columns(2)
     with col1:
-        min_score = st.slider("Minimum Score Filter", 1, 10, 1)
+        min_score = st.slider("Minimum Score Filter", 1.0, 10.0, 1.0, step=0.1)
     with col2:
         show_top_n = st.selectbox("Show Top N Results", [10, 25, 50, 100, "All"], index=1)
     
@@ -391,44 +359,56 @@ def display_scoring_results(scored_results):
     if show_top_n != "All":
         filtered_results = filtered_results.head(show_top_n)
     
-    # Display table with styling
-    styled_results = filtered_results.copy()
-    
-    # Color code scores
-    def color_score(val):
-        if val >= 8:
-            return 'background-color: #d4edda; color: #155724'  # Green
-        elif val >= 6:
-            return 'background-color: #fff3cd; color: #856404'  # Yellow
-        elif val >= 4:
-            return 'background-color: #f8d7da; color: #721c24'  # Light red
-        else:
-            return 'background-color: #f5c6cb; color: #721c24'  # Red
-    
-    # Apply styling - show available columns
-    available_columns = ['company_name', 'industry', 'employee_count', 'location', 'score', 'reason']
-    display_columns = [col for col in available_columns if col in styled_results.columns]
-    
-    if display_columns:
-        styled_df = styled_results[display_columns].style.applymap(
-            color_score, subset=['score']
-        ).format({'score': '{:.1f}'})
+    # Display simplified table
+    for _, row in filtered_results.iterrows():
+        with st.container():
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                st.subheader(f"{row.get('company_name', 'Unknown Company')}")
+                
+                # Company details in one line
+                details = []
+                if row.get('industry'):
+                    details.append(f"Industry: {row['industry']}")
+                if row.get('employee_count'):
+                    details.append(f"Size: {row['employee_count']} employees")
+                if row.get('location'):
+                    details.append(f"Location: {row['location']}")
+                
+                if details:
+                    st.caption(" | ".join(details))
+                
+                # Reasoning in bullet points
+                reason = row.get('reason', 'No analysis available')
+                st.write("**Why this company needs your product:**")
+                st.markdown(reason)
+            
+            with col2:
+                # Score with color coding
+                score = float(row.get('score', 5))
+                if score >= 8.0:
+                    st.success(f"**Score: {score:.1f}/10**")
+                elif score >= 6.0:
+                    st.warning(f"**Score: {score:.1f}/10**")
+                else:
+                    st.info(f"**Score: {score:.1f}/10**")
         
-        st.dataframe(styled_df, use_container_width=True)
-    else:
-        # Fallback - show all columns if standard ones not available
-        st.dataframe(styled_results, use_container_width=True)
+        st.divider()
     
-    # Download options
+    # Download section
     st.subheader("Export Results")
     col1, col2 = st.columns(2)
     
     with col1:
-        # CSV download
-        csv_data = scored_results.to_csv(index=False)
+        # Format the dataframe for download
+        download_df = scored_results.copy()
+        download_df['score'] = download_df['score'].round(1)
+        
+        csv_data = download_df.to_csv(index=False)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         st.download_button(
-            label="📄 Download CSV",
+            label="📄 Download Full Results (CSV)",
             data=csv_data,
             file_name=f"buyer_scores_{timestamp}.csv",
             mime="text/csv"
@@ -440,10 +420,10 @@ def display_scoring_results(scored_results):
             import io
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                scored_results.to_excel(writer, sheet_name='Scored Buyers', index=False)
+                download_df.to_excel(writer, sheet_name='Scored Buyers', index=False)
             
             st.download_button(
-                label="Download Excel",
+                label="📊 Download Full Results (Excel)",
                 data=buffer.getvalue(),
                 file_name=f"buyer_scores_{timestamp}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

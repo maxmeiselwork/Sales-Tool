@@ -455,25 +455,25 @@ Score:"""
         
         return prompt
     
-    def extract_score_and_reason(self, buyer_data, response: str) -> Tuple[int, str]:
+    def extract_score_and_reason(self, buyer_data, response: str) -> Tuple[float, str]:
         """Extract score and reason from model response"""
         try:
             response = response.strip()
-            score = 5  # default
+            score = 5.0  # default
             reason = "Analysis in progress"
             
             # Look for score patterns
             score_patterns = [
-                r'Score:\s*(\d+)',
-                r'score:\s*(\d+)',
-                r'(\d+)/10',
-                r'Rating:\s*(\d+)'
+                r'Score:\s*(\d+\.?\d*)',
+                r'score:\s*(\d+\.?\d*)',
+                r'(\d+\.?\d*)/10',
+                r'Rating:\s*(\d+\.?\d*)'
             ]
             
             for pattern in score_patterns:
                 matches = re.findall(pattern, response)
                 if matches:
-                    score = int(matches[-1])
+                    score = float(matches[-1])
                     break
             
             # Look for detailed analysis
@@ -490,25 +490,25 @@ Score:"""
                     break
             
             if reason == "Analysis in progress" and len(response) > 50:
-                parts = re.split(r'Score:\s*\d+', response, flags=re.IGNORECASE)
+                parts = re.split(r'Score:\s*\d+\.?\d*', response, flags=re.IGNORECASE)
                 if len(parts) > 1:
                     reason = parts[-1].strip()
             
             if len(reason) < 20:
                 reason = f"Company analysis: This {buyer_data.get('industry', 'company')} with {buyer_data.get('employee_count', 'unknown')} employees may have specific needs that align with the product offering."
             
-            score = max(1, min(10, score))
+            score = max(1.0, min(10.0, score))
             
             return score, reason
             
         except Exception as e:
             st.warning(f"⚠️ Error parsing response: {str(e)}")
-            return 5, f"Analysis of {buyer_data.get('company_name', 'this company')} requires further review to determine product fit and potential challenges they face."
+            return 5.0, f"Analysis of {buyer_data.get('company_name', 'this company')} requires further review to determine product fit and potential challenges they face."
     
-    def score_single_buyer(self, buyer_data: Dict, product_description: str) -> Tuple[int, str]:
+    def score_single_buyer(self, buyer_data: Dict, product_description: str) -> Tuple[float, str]:
         """Score a single buyer using company-trained AI"""
         if not self.is_ready():
-            return 5, "Model not ready"
+            return 5.0, "Model not ready"
         
         try:
             # Use enhanced rule-based scoring with AI insights
@@ -519,7 +519,7 @@ Score:"""
             
         except Exception as e:
             st.error(f"❌ Scoring failed for {buyer_data.get('company_name', 'Unknown')}: {str(e)}")
-            return 5, f"Analysis pending for {buyer_data.get('company_name', 'this company')}"
+            return 5.0, f"Analysis pending for {buyer_data.get('company_name', 'this company')}"
     
     def score_buyers(self, buyer_df: pd.DataFrame, product_description: str) -> pd.DataFrame:
         """Score all buyers using company-trained AI"""
@@ -674,9 +674,9 @@ Reason: {row.get('reason', 'No reason provided')}"""
             'model_type': 'Company-trained AI' if self.is_trained() else 'Base Model'
         }
     
-    def _calculate_enhanced_score(self, buyer_data: Dict, product_description: str) -> int:
+    def _calculate_enhanced_score(self, buyer_data: Dict, product_description: str) -> float:
         """Enhanced rule-based scoring using company knowledge"""
-        score = 5  # Base score
+        score = 5.0  # Base score as float
         
         # Industry analysis
         industry = str(buyer_data.get('industry', '')).lower()
@@ -703,7 +703,7 @@ Reason: {row.get('reason', 'No reason provided')}"""
             if ind in industry:
                 matches = sum(1 for keyword in keywords if keyword in product_lower)
                 if matches > 0:
-                    score += min(3, matches)  # Cap industry bonus at +3
+                    score += min(3.0, matches * 0.5)  # Cap industry bonus at +3.0
                     break
         
         # Employee count analysis with enhanced logic
@@ -720,35 +720,35 @@ Reason: {row.get('reason', 'No reason provided')}"""
             
             if emp_count < 50:  # Small companies
                 if is_simple_product or 'startup' in product_lower:
-                    score += 2
+                    score += 2.0
                 elif is_enterprise_product:
-                    score -= 1
+                    score -= 1.0
                 else:
-                    score += 1
+                    score += 1.0
                     
             elif 50 <= emp_count < 500:  # Medium companies
                 if is_scalable_product or 'growth' in product_lower:
-                    score += 2
+                    score += 2.0
                 elif is_simple_product:
-                    score += 1
+                    score += 1.0
                 else:
-                    score += 1
+                    score += 1.0
                     
             elif 500 <= emp_count < 5000:  # Large companies
                 if is_enterprise_product:
-                    score += 2
+                    score += 2.0
                 elif is_scalable_product:
-                    score += 1
+                    score += 1.0
                 elif is_simple_product:
-                    score -= 1
+                    score -= 1.0
                     
             else:  # Enterprise (5000+)
                 if is_enterprise_product:
-                    score += 3
+                    score += 3.0
                 elif is_scalable_product:
-                    score += 1
+                    score += 1.0
                 elif is_simple_product:
-                    score -= 2
+                    score -= 2.0
                     
         except (ValueError, TypeError):
             pass
@@ -760,12 +760,12 @@ Reason: {row.get('reason', 'No reason provided')}"""
         # Tech hubs get bonus for tech products
         tech_hubs = ['san francisco', 'silicon valley', 'new york', 'boston', 'seattle', 'austin', 'london', 'toronto']
         if any(hub in location for hub in tech_hubs) and 'technology' in industry:
-            score += 1
+            score += 1.0
         
         # Developed markets for premium products
         developed_markets = ['united states', 'canada', 'uk', 'germany', 'france', 'australia', 'japan']
         if any(market in country for market in developed_markets) and is_enterprise_product:
-            score += 1
+            score += 1.0
         
         # Company maturity indicators
         founded_year = buyer_data.get('founded_year')
@@ -776,13 +776,13 @@ Reason: {row.get('reason', 'No reason provided')}"""
                 
                 if company_age < 3:  # Very young startup
                     if 'startup' in product_lower or is_simple_product:
-                        score += 1
+                        score += 1.0
                 elif company_age < 10:  # Growth stage
                     if is_scalable_product:
-                        score += 1
+                        score += 1.0
                 else:  # Established company
                     if is_enterprise_product:
-                        score += 1
+                        score += 1.0
             except (ValueError, TypeError):
                 pass
         
@@ -791,79 +791,92 @@ Reason: {row.get('reason', 'No reason provided')}"""
         if website and website != 'nan':
             # Companies with websites are more likely to adopt digital solutions
             if any(word in product_lower for word in ['digital', 'online', 'cloud', 'saas']):
-                score += 1
+                score += 1.0
         
         # Final adjustments and bounds
-        score = max(1, min(10, score))
+        score = max(1.0, min(10.0, score))
         
-        return score
+        return round(score, 1)
 
-    def _generate_detailed_analysis(self, buyer_data: Dict, product_description: str, score: int) -> str:
-        """Generate comprehensive business analysis with company insights"""
+    def _generate_detailed_analysis(self, buyer_data: Dict, product_description: str, score: float) -> str:
+        """Generate product-focused analysis with bullet points"""
         company_name = buyer_data.get('company_name', 'This company')
-        industry = buyer_data.get('industry', 'Unknown industry')
+        industry = buyer_data.get('industry', 'Unknown industry')  
         employee_count = buyer_data.get('employee_count', 'Unknown size')
-        location = buyer_data.get('location', 'Unknown location')
         
-        analysis = f"{company_name} operates in the {industry} sector"
+        # Extract key product benefits from description
+        product_lower = product_description.lower()
         
-        # Add detailed size context with business implications
+        # Build bullet-point analysis focused on product fit
+        bullets = []
+        
+        # Industry-specific benefits
+        if 'financial' in industry.lower():
+            if any(word in product_lower for word in ['database', 'real-time', 'analytics', 'performance']):
+                bullets.append("• **Regulatory Compliance**: Fast data retrieval supports real-time risk monitoring and audit trail requirements")
+                bullets.append("• **Transaction Processing**: Low-latency database critical for high-frequency trading and payment processing")
+                bullets.append("• **Customer Analytics**: Real-time personalization enables better client recommendations and fraud detection")
+        
+        elif 'technology' in industry.lower():
+            if any(word in product_lower for word in ['database', 'api', 'cloud', 'platform']):
+                bullets.append("• **Scalable Infrastructure**: Tech companies need high-performance systems that grow with user base")
+                bullets.append("• **Developer Productivity**: Fast queries and reliable APIs reduce development bottlenecks")
+                bullets.append("• **Customer Experience**: Sub-millisecond response times directly impact user satisfaction")
+        
+        elif 'healthcare' in industry.lower():
+            if any(word in product_lower for word in ['database', 'real-time', 'analytics']):
+                bullets.append("• **Patient Data Management**: Real-time access to medical records improves care delivery")
+                bullets.append("• **HIPAA Compliance**: Secure, fast data systems meet healthcare regulatory requirements")
+                bullets.append("• **Clinical Decision Support**: Instant data retrieval enables better diagnostic decisions")
+        
+        elif 'retail' in industry.lower() or 'ecommerce' in industry.lower():
+            if any(word in product_lower for word in ['database', 'real-time', 'personalization', 'analytics']):
+                bullets.append("• **Inventory Management**: Real-time data prevents stockouts and overstock situations")
+                bullets.append("• **Customer Personalization**: Fast recommendation engines increase conversion rates")
+                bullets.append("• **Fraud Prevention**: Real-time transaction monitoring reduces payment fraud")
+        
+        # Size-specific benefits  
         try:
             emp_count = int(str(employee_count).replace(',', ''))
-            if emp_count < 10:
-                analysis += f" with {emp_count} employees, making them a micro-business that prioritizes cost-effective, simple solutions with immediate ROI and minimal implementation complexity."
+            if 50 <= emp_count <= 500:
+                bullets.append("• **Scale Readiness**: Mid-size team needs infrastructure that grows with expanding data requirements")
+                bullets.append("• **Cost Efficiency**: Right-sized solution avoids enterprise overhead while providing performance")
+            elif emp_count > 500:
+                bullets.append("• **Enterprise Performance**: Large organization requires sub-millisecond response times for critical operations")
+                bullets.append("• **Infrastructure Optimization**: Existing systems likely struggling with query volume and speed requirements")
             elif emp_count < 50:
-                analysis += f" with {emp_count} employees, positioning them as a small company that values affordable, user-friendly solutions that can grow with their business without requiring dedicated IT staff."
-            elif emp_count < 250:
-                analysis += f" with {emp_count} employees, making them a mid-size company that needs scalable solutions supporting departmental workflows, with moderate budgets for technology investments."
-            elif emp_count < 1000:
-                analysis += f" with {emp_count} employees, categorizing them as a large company requiring robust, integrated solutions that can handle complex operations and compliance requirements."
-            else:
-                analysis += f" with {emp_count} employees, making them an enterprise organization needing sophisticated, highly secure solutions with advanced customization, integration capabilities, and dedicated support."
-        except (ValueError, TypeError):
-            analysis += " and appears to be an established business with specific operational requirements."
+                bullets.append("• **Startup Agility**: Small team needs simple, powerful tools that don't require dedicated DevOps")
+                bullets.append("• **Competitive Edge**: Fast data access helps startups compete with larger companies")
+        except:
+            pass
         
-        # Enhanced industry-specific insights
-        industry_lower = industry.lower()
-        if 'technology' in industry_lower or 'software' in industry_lower:
-            analysis += " Technology companies typically face rapid scaling challenges, need developer-friendly tools, prioritize API integrations, and require solutions that enhance productivity while maintaining security and compliance standards."
-        elif 'healthcare' in industry_lower or 'medical' in industry_lower:
-            analysis += " Healthcare organizations must navigate strict HIPAA compliance, patient data security, interoperability challenges, and cost pressures while improving patient outcomes and operational efficiency."
-        elif 'financial' in industry_lower or 'banking' in industry_lower:
-            analysis += " Financial services companies operate under heavy regulatory oversight, requiring solutions that ensure data security, audit trails, compliance reporting, and risk management while maintaining operational efficiency."
-        elif 'retail' in industry_lower or 'ecommerce' in industry_lower:
-            analysis += " Retail companies struggle with inventory optimization, omnichannel customer experiences, seasonal demand fluctuations, and competitive pricing pressures requiring integrated operational solutions."
-        elif 'manufacturing' in industry_lower:
-            analysis += " Manufacturing companies focus on supply chain optimization, quality control, equipment maintenance, regulatory compliance, and operational efficiency to maintain competitive advantages."
-        elif 'education' in industry_lower:
-            analysis += " Educational institutions need cost-effective solutions that enhance learning outcomes, streamline administrative processes, and adapt to evolving digital learning requirements."
-        else:
-            analysis += f" Companies in the {industry} sector typically require solutions that improve operational efficiency, ensure regulatory compliance, and provide competitive differentiation."
+        # Product-specific pain points this solves
+        if 'database' in product_lower and 'real-time' in product_lower:
+            bullets.append("• **Query Performance Issues**: Current database likely causing delays in data-driven decision making")
+            bullets.append("• **Scalability Bottlenecks**: Growing data volume overwhelming existing infrastructure capacity")
         
-        # Location-based business context
-        if location and location != 'Unknown location':
-            analysis += f" Located in {location}, they operate in a market with specific regulatory, economic, and competitive dynamics that influence their technology adoption patterns."
+        if 'ai' in product_lower or 'ml' in product_lower:
+            bullets.append("• **AI/ML Infrastructure**: Feature stores and model inference require ultra-fast data access")
+            bullets.append("• **Competitive Advantage**: Real-time personalization directly impacts revenue and customer satisfaction")
         
-        # Product fit analysis with detailed reasoning
-        analysis += f" Regarding the product '{product_description}', "
+        if 'analytics' in product_lower:
+            bullets.append("• **Business Intelligence**: Fast analytics enable real-time business decisions and competitive responses")
+            bullets.append("• **Data-Driven Culture**: Quick insights help teams make better decisions faster")
         
-        if score >= 9:
-            analysis += "this company represents an exceptional fit with immediate need, budget capacity, and organizational readiness. They likely face specific pain points this solution directly addresses, have decision-making authority, and can implement quickly with high probability of success and expansion."
-        elif score >= 7:
-            analysis += "this company shows strong alignment with clear value proposition potential. They likely have relevant business challenges, appropriate budget considerations, and organizational structure to evaluate and adopt this solution with proper sales engagement and demonstration."
-        elif score >= 5:
-            analysis += "this company presents moderate opportunity requiring additional qualification. While there may be relevant use cases, factors like timing, budget approval processes, competing priorities, or implementation complexity need further investigation."
-        elif score >= 3:
-            analysis += "this company shows limited alignment with the current offering. There might be niche applications or future potential, but significant challenges exist around product-market fit, budget constraints, or organizational priorities that make near-term success unlikely."
-        else:
-            analysis += "this company appears to be a poor fit for this particular solution. Their business model, size, industry requirements, or current technology stack suggest minimal likelihood of interest or successful implementation."
+        # Add general business impact based on score
+        if score >= 8.0:
+            bullets.append("• **Immediate ROI**: Strong technical fit suggests quick implementation and measurable performance gains")
+            bullets.append("• **Strategic Priority**: Core business functions directly benefit from this technology upgrade")
+        elif score >= 6.0:
+            bullets.append("• **Growth Enabler**: Solution addresses scaling challenges as business expands")
+            bullets.append("• **Operational Efficiency**: Performance improvements reduce manual workarounds and system delays")
+        elif score >= 4.0:
+            bullets.append("• **Future Consideration**: May become relevant as company grows or technology needs evolve")
+            bullets.append("• **Niche Applications**: Specific use cases could benefit from this technology")
         
-        # Add strategic recommendations
-        if score >= 7:
-            analysis += " Recommended approach: Direct outreach with industry-specific case studies and ROI demonstrations."
-        elif score >= 5:
-            analysis += " Recommended approach: Nurture campaign with educational content and periodic check-ins for timing."
-        else:
-            analysis += " Recommended approach: Low-priority follow-up or exclude from active campaigns."
+        # If no specific bullets, add generic ones
+        if not bullets:
+            bullets.append("• **Performance Improvement**: Database optimization typically yields measurable efficiency gains")
+            bullets.append("• **Future-Proofing**: Scalable infrastructure supports business growth and data expansion")
         
-        return analysis
+        return "\n".join(bullets)
